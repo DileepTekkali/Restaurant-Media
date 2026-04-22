@@ -1,4 +1,4 @@
-import { MenuItem, CATEGORY_ORDER, CATEGORY_COLOR_VAR } from "@/types/menu";
+import { MenuItem, GENERIC_CATEGORY_ORDER, getCategoryColorVar } from "@/types/menu";
 import { MenuItemCard } from "./MenuItemCard";
 
 interface MenuListProps {
@@ -7,18 +7,25 @@ interface MenuListProps {
   websiteUrl?: string;
 }
 
+const GENERIC_SET = new Set<string>(GENERIC_CATEGORY_ORDER);
+
 export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) => {
-  // Group by category
+  // Group by category, preserving the order categories first appear in the
+  // returned items (which mirrors how the AI emitted them — typically the
+  // order they appear on the source website).
   const grouped = new Map<string, MenuItem[]>();
   for (const item of items) {
-    const cat = item.category && CATEGORY_COLOR_VAR[item.category]
-      ? item.category
-      : "Other";
+    const cat = (item.category && item.category.trim()) || "Other";
     if (!grouped.has(cat)) grouped.set(cat, []);
     grouped.get(cat)!.push(item);
   }
 
-  const orderedCats = CATEGORY_ORDER.filter((c) => grouped.has(c));
+  // Sort: website-defined (custom) categories first in insertion order,
+  // generic fallback categories last in their canonical order.
+  const allCats = [...grouped.keys()];
+  const customCats = allCats.filter((c) => !GENERIC_SET.has(c));
+  const genericCats = GENERIC_CATEGORY_ORDER.filter((c) => grouped.has(c));
+  const orderedCats = [...customCats, ...genericCats];
 
   return (
     <section className="w-full max-w-6xl animate-fade-in-up">
@@ -50,7 +57,7 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
 
       <div className="flex flex-col gap-12">
         {orderedCats.map((cat) => {
-          const accentVar = CATEGORY_COLOR_VAR[cat];
+          const accentVar = getCategoryColorVar(cat);
           const catItems = grouped.get(cat)!;
           return (
             <div key={cat}>

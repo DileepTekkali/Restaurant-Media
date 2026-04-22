@@ -107,16 +107,40 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
     .map(([url]) => url);
 }
 
+// Headings that are clearly NOT food categories.
+const HEADING_BLOCKLIST = [
+  "menu", "our menu", "the menu", "home", "about", "about us", "contact",
+  "contact us", "reservation", "reservations", "book", "booking", "gallery",
+  "location", "locations", "press", "events", "private dining", "careers",
+  "follow us", "newsletter", "sign up", "login", "search", "cart",
+  "order online", "find us", "hours", "opening hours",
+];
+
+function isPlausibleCategoryHeading(raw: string): boolean {
+  const t = raw.replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (t.length < 2 || t.length > 60) return false;
+  // Must be mostly letters (allow &, -, /, spaces, apostrophes).
+  if (!/^[A-Za-z][A-Za-z0-9 &/\-'’.]*$/.test(t)) return false;
+  // Avoid sentences.
+  if (t.split(/\s+/).length > 6) return false;
+  if (/[.!?]$/.test(t)) return false;
+  const lower = t.toLowerCase();
+  if (HEADING_BLOCKLIST.includes(lower)) return false;
+  return true;
+}
+
 /**
- * Extract candidate menu text + page title from raw HTML.
+ * Extract candidate menu text + page title + category headings from raw HTML.
  */
 function extractCandidates(html: string): {
   title: string | null;
   candidates: RawCandidate[];
   fullText: string;
+  headings: string[];
 } {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  if (!doc) return { title: null, candidates: [], fullText: "" };
+  if (!doc) return { title: null, candidates: [], fullText: "", headings: [] };
 
   doc.querySelectorAll("script, style, noscript, svg, iframe").forEach((n) => {
     (n as Element).remove();
@@ -126,6 +150,32 @@ function extractCandidates(html: string): {
     doc.querySelector("title")?.textContent?.trim() ||
     doc.querySelector("h1")?.textContent?.trim() ||
     null;
+
+  // Collect candidate category headings: h2-h4, plus elements with class
+  // patterns like "menu-section-title", "category-title", etc.
+  const headingSet = new Set<string>();
+  const headingSelectors = [
+    "h2", "h3", "h4",
+    "[class*='category' i]", "[class*='section-title' i]",
+    "[class*='menu-title' i]", "[class*='menu-heading' i]",
+    "[class*='menu-section' i] > :first-child",
+  ];
+  for (const sel of headingSelectors) {
+    let nodes: NodeListOf<Element>;
+    try {
+      nodes = doc.querySelectorAll(sel) as unknown as NodeListOf<Element>;
+    } catch {
+      continue;
+    }
+    nodes.forEach((node) => {
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (isPlausibleCategoryHeading(text)) {
+        // Title-case-ish: strip trailing punctuation.
+        headingSet.add(text.replace(/[:•·\-–—]+$/, "").trim());
+      }
+    });
+    if (headingSet.size > 60) break;
+  }
 
   const selectors = [
     ".menu-item", ".menu_item", ".dish", ".food-item",
@@ -165,7 +215,12 @@ function extractCandidates(html: string): {
     .trim()
     .slice(0, 16000);
 
-  return { title, candidates: candidates.slice(0, 300), fullText };
+  return {
+    title,
+    candidates: candidates.slice(0, 300),
+    fullText,
+    headings: [...headingSet].slice(0, 60),
+  };
 }
 
 /**
@@ -178,6 +233,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   candidates: RawCandidate[];
   fullText: string;
   pagesFetched: string[];
+  headings: string[];
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
@@ -185,8 +241,8 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const allCandidates: RawCandidate[] = [];
   const seenText = new Set<string>();
   const fullTextParts: string[] = [];
+  const headingSet = new Set<string>();
 
-  // Always fetch the entry URL first.
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
   pagesFetched.push(entryUrl);
@@ -199,16 +255,15 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
       allCandidates.push(c);
     }
   }
+  for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
 
-  // Discover candidate menu sub-pages from the entry HTML.
   const subLinks = discoverMenuLinks(entryHtml, entryUrl)
     .filter((u) => !visited.has(u))
-    .slice(0, 5); // cap to keep runtime sane
+    .slice(0, 5);
 
   console.log(`Discovered ${subLinks.length} menu-like sub-pages`);
 
-  // Fetch them in parallel; tolerate individual failures.
   const subResults = await Promise.allSettled(
     subLinks.map(async (url) => {
       const html = await fetchHtml(url);
@@ -232,10 +287,10 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
         allCandidates.push(c);
       }
     }
+    for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
   }
 
-  // Cap merged full text so we stay within Groq's context window.
   const fullText = fullTextParts.join("\n\n").slice(0, 20000);
 
   return {
@@ -243,6 +298,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     candidates: allCandidates.slice(0, 400),
     fullText,
     pagesFetched,
+    headings: [...headingSet].slice(0, 60),
   };
 }
 
@@ -258,31 +314,44 @@ async function structureWithGroq(
   restaurantName: string | null,
   candidates: RawCandidate[],
   fullText: string,
+  websiteHeadings: string[],
 ): Promise<ParsedItem[]> {
   const candidateBlock =
     candidates.length > 0
       ? candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n")
       : "(no structured candidates extracted)";
 
+  const headingsBlock =
+    websiteHeadings.length > 0
+      ? websiteHeadings.map((h) => `- ${h}`).join("\n")
+      : "(none detected — use the generic fallback set)";
+
   const userPrompt = `You are a menu data extraction AI for restaurant websites.
 
 Restaurant: ${restaurantName ?? "unknown"}
 
-Below are text snippets scraped from one or more pages of the restaurant's website (homepage + menu pages). Some are real menu items, some are noise (navigation, footer, marketing copy). Extract ONLY the actual food and drink menu items.
+Below are text snippets scraped from one or more pages of the restaurant's website (homepage + menu pages). Extract ONLY the actual food and drink menu items.
 
-Rules:
+CATEGORY RULES (very important):
+- The website itself uses these section headings, which are the AUTHORITATIVE category names. Prefer them EXACTLY as written (preserve capitalization, spelling, accents):
+${headingsBlock}
+- Assign each item to the website heading it most clearly belongs under (use the surrounding text in the full page text to decide which heading an item appears under).
+- Only if NO website heading fits an item — or if no headings were detected at all — fall back to a refined generic category from this set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other".
+- Do NOT invent new categories that are neither in the website headings nor in the generic fallback set.
+- Keep category names short (max 40 chars).
+
+OTHER RULES:
 - Deduplicate items across pages.
-- Standardize categories into a small set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", or "Other".
 - Preserve original currency symbols in price (₹, $, €, £, etc.). Use null if no price is visible.
 - Descriptions max 25 words. Use null if absent — do NOT invent descriptions.
 - Fix obvious typos in dish names but keep the original meaning.
-- Return ONLY genuine menu items. Skip headings, contact info, hours, addresses, marketing copy.
-- Be EXHAUSTIVE — if the source clearly lists 30+ dishes across multiple categories, return them all.
+- Return ONLY genuine menu items. Skip nav, contact info, hours, addresses, marketing copy.
+- Be EXHAUSTIVE — if the source lists 30+ dishes across multiple categories, return them all.
 
 Structured candidates:
 ${candidateBlock}
 
-Full page text from all crawled pages (additional context, may contain menu data not in the candidates):
+Full page text from all crawled pages (use this to figure out which website heading each item belongs under):
 ${fullText.slice(0, 12000)}`;
 
   const body = {
@@ -292,7 +361,7 @@ ${fullText.slice(0, 12000)}`;
       {
         role: "system",
         content:
-          "You extract restaurant menu data. You always call the return_menu function with cleaned, deduplicated items.",
+          "You extract restaurant menu data. You always call the return_menu function with cleaned, deduplicated items. You preserve the website's own category names whenever they exist.",
       },
       { role: "user", content: userPrompt },
     ],
@@ -313,15 +382,8 @@ ${fullText.slice(0, 12000)}`;
                     name: { type: "string" },
                     category: {
                       type: "string",
-                      enum: [
-                        "Starters",
-                        "Mains",
-                        "Desserts",
-                        "Beverages",
-                        "Sides",
-                        "Specials",
-                        "Other",
-                      ],
+                      description:
+                        "Website's own section heading if available, otherwise one of: Starters, Mains, Desserts, Beverages, Sides, Specials, Other.",
                     },
                     price: { type: ["string", "null"] },
                     description: { type: ["string", "null"] },
@@ -360,6 +422,29 @@ ${fullText.slice(0, 12000)}`;
   const parsed = JSON.parse(toolCall.function.arguments);
   const items = (parsed.items ?? []) as ParsedItem[];
 
+  const GENERIC_FALLBACK = new Set([
+    "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other",
+  ]);
+  // Lowercase index of website headings -> canonical (original-case) name.
+  const headingIndex = new Map<string, string>();
+  for (const h of websiteHeadings) headingIndex.set(h.toLowerCase(), h);
+
+  const normalizeCategory = (raw: string | null | undefined): string => {
+    const c = (raw || "").trim();
+    if (!c) return "Other";
+    // Exact / case-insensitive match against a website heading wins.
+    const lower = c.toLowerCase();
+    if (headingIndex.has(lower)) return headingIndex.get(lower)!;
+    // Accept the generic fallback set as-is.
+    if (GENERIC_FALLBACK.has(c)) return c;
+    // Title-case generic match (e.g. "starters" -> "Starters").
+    const titled = c.charAt(0).toUpperCase() + c.slice(1).toLowerCase();
+    if (GENERIC_FALLBACK.has(titled)) return titled;
+    // If headings exist but model invented something new, keep its label
+    // trimmed to a sane length so we don't lose info.
+    return c.slice(0, 40);
+  };
+
   // Final sanity filter + dedupe by lowercased name.
   const byName = new Map<string, ParsedItem>();
   for (const i of items) {
@@ -368,7 +453,7 @@ ${fullText.slice(0, 12000)}`;
     if (byName.has(key)) continue;
     byName.set(key, {
       name: i.name.trim(),
-      category: i.category ?? "Other",
+      category: normalizeCategory(i.category),
       price: i.price?.trim() || null,
       description: i.description?.trim() || null,
     });
@@ -420,16 +505,22 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Gathering menu corpus for", url);
-      const { title, candidates, fullText, pagesFetched } =
+      const { title, candidates, fullText, pagesFetched, headings } =
         await gatherMenuCorpus(url);
       console.log(
         `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
       );
       console.log(
-        `Extracted ${candidates.length} candidates, fullText=${fullText.length} chars, title="${title}"`,
+        `Extracted ${candidates.length} candidates, fullText=${fullText.length} chars, title="${title}", headings=[${headings.join(" | ")}]`,
       );
 
-      const items = await structureWithGroq(groqKey, title, candidates, fullText);
+      const items = await structureWithGroq(
+        groqKey,
+        title,
+        candidates,
+        fullText,
+        headings,
+      );
       console.log(`Groq returned ${items.length} items`);
 
       if (items.length === 0) {
