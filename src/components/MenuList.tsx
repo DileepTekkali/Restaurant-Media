@@ -1,0 +1,85 @@
+import { MenuItem, CATEGORY_ORDER, CATEGORY_COLOR_VAR } from "@/types/menu";
+import { MenuItemCard } from "./MenuItemCard";
+
+interface MenuListProps {
+  items: MenuItem[];
+  restaurantName?: string | null;
+  websiteUrl?: string;
+}
+
+export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) => {
+  // Group by category
+  const grouped = new Map<string, MenuItem[]>();
+  for (const item of items) {
+    const cat = item.category && CATEGORY_COLOR_VAR[item.category]
+      ? item.category
+      : "Other";
+    if (!grouped.has(cat)) grouped.set(cat, []);
+    grouped.get(cat)!.push(item);
+  }
+
+  const orderedCats = CATEGORY_ORDER.filter((c) => grouped.has(c));
+
+  return (
+    <section className="w-full max-w-6xl animate-fade-in-up">
+      <header className="mb-8 flex flex-col gap-2 border-b border-border pb-6">
+        <p className="text-xs font-semibold uppercase tracking-widest text-primary">
+          Extracted menu
+        </p>
+        <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
+          {restaurantName || "Your restaurant"}
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-6 gap-y-1 text-sm text-muted-foreground">
+          {websiteUrl && (
+            <a
+              href={websiteUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline-offset-4 hover:text-primary hover:underline"
+            >
+              {websiteUrl.replace(/^https?:\/\//, "")}
+            </a>
+          )}
+          <span>
+            <strong className="text-foreground">{items.length}</strong> items in{" "}
+            <strong className="text-foreground">{orderedCats.length}</strong>{" "}
+            categories
+          </span>
+        </div>
+      </header>
+
+      <div className="flex flex-col gap-12">
+        {orderedCats.map((cat) => {
+          const accentVar = CATEGORY_COLOR_VAR[cat];
+          const catItems = grouped.get(cat)!;
+          return (
+            <div key={cat}>
+              <div className="mb-4 flex items-center gap-3">
+                <span
+                  className="h-2 w-2 rounded-full"
+                  style={{ backgroundColor: `hsl(var(${accentVar}))` }}
+                />
+                <h3 className="text-lg font-semibold text-foreground">
+                  {cat}
+                </h3>
+                <span className="text-sm text-muted-foreground">
+                  ({catItems.length})
+                </span>
+                <div className="ml-2 flex-1 border-t border-dashed border-border" />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                {catItems.map((item) => (
+                  <MenuItemCard
+                    key={item.id}
+                    item={item}
+                    accentVar={accentVar}
+                  />
+                ))}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </section>
+  );
+};
