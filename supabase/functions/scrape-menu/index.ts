@@ -233,6 +233,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   candidates: RawCandidate[];
   fullText: string;
   pagesFetched: string[];
+  headings: string[];
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
@@ -240,8 +241,8 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const allCandidates: RawCandidate[] = [];
   const seenText = new Set<string>();
   const fullTextParts: string[] = [];
+  const headingSet = new Set<string>();
 
-  // Always fetch the entry URL first.
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
   pagesFetched.push(entryUrl);
@@ -254,16 +255,15 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
       allCandidates.push(c);
     }
   }
+  for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
 
-  // Discover candidate menu sub-pages from the entry HTML.
   const subLinks = discoverMenuLinks(entryHtml, entryUrl)
     .filter((u) => !visited.has(u))
-    .slice(0, 5); // cap to keep runtime sane
+    .slice(0, 5);
 
   console.log(`Discovered ${subLinks.length} menu-like sub-pages`);
 
-  // Fetch them in parallel; tolerate individual failures.
   const subResults = await Promise.allSettled(
     subLinks.map(async (url) => {
       const html = await fetchHtml(url);
@@ -287,10 +287,10 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
         allCandidates.push(c);
       }
     }
+    for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
   }
 
-  // Cap merged full text so we stay within Groq's context window.
   const fullText = fullTextParts.join("\n\n").slice(0, 20000);
 
   return {
@@ -298,6 +298,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     candidates: allCandidates.slice(0, 400),
     fullText,
     pagesFetched,
+    headings: [...headingSet].slice(0, 60),
   };
 }
 
@@ -313,31 +314,44 @@ async function structureWithGroq(
   restaurantName: string | null,
   candidates: RawCandidate[],
   fullText: string,
+  websiteHeadings: string[],
 ): Promise<ParsedItem[]> {
   const candidateBlock =
     candidates.length > 0
       ? candidates.map((c, i) => `${i + 1}. ${c.text}`).join("\n")
       : "(no structured candidates extracted)";
 
+  const headingsBlock =
+    websiteHeadings.length > 0
+      ? websiteHeadings.map((h) => `- ${h}`).join("\n")
+      : "(none detected — use the generic fallback set)";
+
   const userPrompt = `You are a menu data extraction AI for restaurant websites.
 
 Restaurant: ${restaurantName ?? "unknown"}
 
-Below are text snippets scraped from one or more pages of the restaurant's website (homepage + menu pages). Some are real menu items, some are noise (navigation, footer, marketing copy). Extract ONLY the actual food and drink menu items.
+Below are text snippets scraped from one or more pages of the restaurant's website (homepage + menu pages). Extract ONLY the actual food and drink menu items.
 
-Rules:
+CATEGORY RULES (very important):
+- The website itself uses these section headings, which are the AUTHORITATIVE category names. Prefer them EXACTLY as written (preserve capitalization, spelling, accents):
+${headingsBlock}
+- Assign each item to the website heading it most clearly belongs under (use the surrounding text in the full page text to decide which heading an item appears under).
+- Only if NO website heading fits an item — or if no headings were detected at all — fall back to a refined generic category from this set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other".
+- Do NOT invent new categories that are neither in the website headings nor in the generic fallback set.
+- Keep category names short (max 40 chars).
+
+OTHER RULES:
 - Deduplicate items across pages.
-- Standardize categories into a small set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", or "Other".
 - Preserve original currency symbols in price (₹, $, €, £, etc.). Use null if no price is visible.
 - Descriptions max 25 words. Use null if absent — do NOT invent descriptions.
 - Fix obvious typos in dish names but keep the original meaning.
-- Return ONLY genuine menu items. Skip headings, contact info, hours, addresses, marketing copy.
-- Be EXHAUSTIVE — if the source clearly lists 30+ dishes across multiple categories, return them all.
+- Return ONLY genuine menu items. Skip nav, contact info, hours, addresses, marketing copy.
+- Be EXHAUSTIVE — if the source lists 30+ dishes across multiple categories, return them all.
 
 Structured candidates:
 ${candidateBlock}
 
-Full page text from all crawled pages (additional context, may contain menu data not in the candidates):
+Full page text from all crawled pages (use this to figure out which website heading each item belongs under):
 ${fullText.slice(0, 12000)}`;
 
   const body = {
@@ -347,7 +361,7 @@ ${fullText.slice(0, 12000)}`;
       {
         role: "system",
         content:
-          "You extract restaurant menu data. You always call the return_menu function with cleaned, deduplicated items.",
+          "You extract restaurant menu data. You always call the return_menu function with cleaned, deduplicated items. You preserve the website's own category names whenever they exist.",
       },
       { role: "user", content: userPrompt },
     ],
@@ -368,15 +382,8 @@ ${fullText.slice(0, 12000)}`;
                     name: { type: "string" },
                     category: {
                       type: "string",
-                      enum: [
-                        "Starters",
-                        "Mains",
-                        "Desserts",
-                        "Beverages",
-                        "Sides",
-                        "Specials",
-                        "Other",
-                      ],
+                      description:
+                        "Website's own section heading if available, otherwise one of: Starters, Mains, Desserts, Beverages, Sides, Specials, Other.",
                     },
                     price: { type: ["string", "null"] },
                     description: { type: ["string", "null"] },
