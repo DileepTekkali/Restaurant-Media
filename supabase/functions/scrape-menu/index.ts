@@ -1,6 +1,11 @@
 // Scrape a restaurant website and extract a structured menu using Groq.
-// Strategy: fetch HTML -> strip to plain text candidates -> ask Groq to return
-// a clean JSON array via tool calling -> persist to Supabase.
+// Strategy:
+//   1. Fetch the given URL.
+//   2. Discover menu-related sub-pages (links containing "menu", "food",
+//      "dishes", "carte", etc.) and fetch a handful of them in parallel.
+//   3. Strip each page to plain-text candidates + a fallback full-text body.
+//   4. Send the merged corpus to Groq via tool-calling for clean JSON.
+//   5. Persist the structured items to Supabase.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
@@ -14,6 +19,13 @@ const corsHeaders = {
 
 const GROQ_URL = "https://api.groq.com/openai/v1/chat/completions";
 const GROQ_MODEL = "llama-3.3-70b-versatile";
+
+// Keywords that suggest a link points at a menu / food listing page.
+const MENU_LINK_KEYWORDS = [
+  "menu", "menus", "food", "dishes", "dining", "carte", "a-la-carte",
+  "alacarte", "lunch", "dinner", "breakfast", "brunch", "drinks",
+  "beverages", "desserts", "specials", "order", "eat",
+];
 
 interface RawCandidate {
   text: string;
@@ -44,9 +56,59 @@ async function fetchHtml(url: string): Promise<string> {
 }
 
 /**
- * Extract candidate menu text + restaurant title from raw HTML.
- * We strip script/style noise, walk likely menu containers, and also keep
- * the full visible text (truncated) as a fallback so Groq has context.
+ * Find links on a page that look like they lead to menu content.
+ * Resolves them against the page's base URL and dedupes.
+ */
+function discoverMenuLinks(html: string, baseUrl: string): string[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  if (!doc) return [];
+
+  const base = new URL(baseUrl);
+  const found = new Map<string, number>(); // url -> score
+
+  doc.querySelectorAll("a[href]").forEach((node) => {
+    const a = node as Element;
+    const href = a.getAttribute("href") || "";
+    if (!href || href.startsWith("#") || href.startsWith("mailto:") || href.startsWith("tel:")) {
+      return;
+    }
+
+    let resolved: URL;
+    try {
+      resolved = new URL(href, base);
+    } catch {
+      return;
+    }
+
+    // Same-host only — don't wander off to social media etc.
+    if (resolved.hostname !== base.hostname) return;
+    // Skip obvious non-HTML assets.
+    if (/\.(pdf|jpe?g|png|gif|svg|webp|mp4|zip|doc|docx)$/i.test(resolved.pathname)) {
+      return;
+    }
+
+    const haystack = (
+      (a.textContent || "") + " " + resolved.pathname + " " + (a.getAttribute("title") || "")
+    ).toLowerCase();
+
+    let score = 0;
+    for (const kw of MENU_LINK_KEYWORDS) {
+      if (haystack.includes(kw)) score += kw === "menu" ? 3 : 1;
+    }
+
+    if (score > 0) {
+      const key = resolved.origin + resolved.pathname;
+      found.set(key, Math.max(found.get(key) ?? 0, score));
+    }
+  });
+
+  return [...found.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([url]) => url);
+}
+
+/**
+ * Extract candidate menu text + page title from raw HTML.
  */
 function extractCandidates(html: string): {
   title: string | null;
@@ -56,7 +118,6 @@ function extractCandidates(html: string): {
   const doc = new DOMParser().parseFromString(html, "text/html");
   if (!doc) return { title: null, candidates: [], fullText: "" };
 
-  // Remove noise
   doc.querySelectorAll("script, style, noscript, svg, iframe").forEach((n) => {
     (n as Element).remove();
   });
@@ -73,6 +134,10 @@ function extractCandidates(html: string): {
     "[class*='menu'] li", "[class*='menu'] article",
     "[id*='menu'] li", "[id*='menu'] article",
     ".item", ".card",
+    // Common WordPress / page-builder patterns
+    ".elementor-widget-container li",
+    ".wp-block-group li",
+    "table tr",
   ];
 
   const candidates: RawCandidate[] = [];
@@ -86,24 +151,99 @@ function extractCandidates(html: string): {
       continue;
     }
     nodes.forEach((node) => {
-      const text = (node.textContent || "")
-        .replace(/\s+/g, " ")
-        .trim();
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
       if (text.length < 8 || text.length > 600) return;
       if (seen.has(text)) return;
       seen.add(text);
       candidates.push({ text, source: sel });
     });
-    if (candidates.length > 200) break;
+    if (candidates.length > 300) break;
   }
 
-  // Full visible text as fallback
   const fullText = (doc.body?.textContent || "")
     .replace(/\s+/g, " ")
     .trim()
-    .slice(0, 12000);
+    .slice(0, 16000);
 
-  return { title, candidates: candidates.slice(0, 200), fullText };
+  return { title, candidates: candidates.slice(0, 300), fullText };
+}
+
+/**
+ * Crawl the entry URL plus up to N menu-related sub-pages and merge their
+ * extracted candidates + full text. Title is taken from the first page that
+ * has one.
+ */
+async function gatherMenuCorpus(entryUrl: string): Promise<{
+  title: string | null;
+  candidates: RawCandidate[];
+  fullText: string;
+  pagesFetched: string[];
+}> {
+  const visited = new Set<string>();
+  const pagesFetched: string[] = [];
+  let title: string | null = null;
+  const allCandidates: RawCandidate[] = [];
+  const seenText = new Set<string>();
+  const fullTextParts: string[] = [];
+
+  // Always fetch the entry URL first.
+  const entryHtml = await fetchHtml(entryUrl);
+  visited.add(entryUrl);
+  pagesFetched.push(entryUrl);
+
+  const entry = extractCandidates(entryHtml);
+  title = entry.title;
+  for (const c of entry.candidates) {
+    if (!seenText.has(c.text)) {
+      seenText.add(c.text);
+      allCandidates.push(c);
+    }
+  }
+  if (entry.fullText) fullTextParts.push(entry.fullText);
+
+  // Discover candidate menu sub-pages from the entry HTML.
+  const subLinks = discoverMenuLinks(entryHtml, entryUrl)
+    .filter((u) => !visited.has(u))
+    .slice(0, 5); // cap to keep runtime sane
+
+  console.log(`Discovered ${subLinks.length} menu-like sub-pages`);
+
+  // Fetch them in parallel; tolerate individual failures.
+  const subResults = await Promise.allSettled(
+    subLinks.map(async (url) => {
+      const html = await fetchHtml(url);
+      return { url, html };
+    }),
+  );
+
+  for (const r of subResults) {
+    if (r.status !== "fulfilled") {
+      console.warn("Sub-page fetch failed:", r.reason);
+      continue;
+    }
+    const { url, html } = r.value;
+    visited.add(url);
+    pagesFetched.push(url);
+    const ex = extractCandidates(html);
+    if (!title && ex.title) title = ex.title;
+    for (const c of ex.candidates) {
+      if (!seenText.has(c.text)) {
+        seenText.add(c.text);
+        allCandidates.push(c);
+      }
+    }
+    if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+  }
+
+  // Cap merged full text so we stay within Groq's context window.
+  const fullText = fullTextParts.join("\n\n").slice(0, 20000);
+
+  return {
+    title,
+    candidates: allCandidates.slice(0, 400),
+    fullText,
+    pagesFetched,
+  };
 }
 
 interface ParsedItem {
@@ -128,22 +268,22 @@ async function structureWithGroq(
 
 Restaurant: ${restaurantName ?? "unknown"}
 
-Below are text snippets scraped from the restaurant's website. Some are real menu items, some are noise (navigation, footer, marketing copy). Extract ONLY the actual food and drink menu items.
+Below are text snippets scraped from one or more pages of the restaurant's website (homepage + menu pages). Some are real menu items, some are noise (navigation, footer, marketing copy). Extract ONLY the actual food and drink menu items.
 
 Rules:
-- Deduplicate items.
+- Deduplicate items across pages.
 - Standardize categories into a small set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", or "Other".
 - Preserve original currency symbols in price (₹, $, €, £, etc.). Use null if no price is visible.
 - Descriptions max 25 words. Use null if absent — do NOT invent descriptions.
 - Fix obvious typos in dish names but keep the original meaning.
-- Return ONLY genuine menu items. If something looks like a heading, contact info, hours, or marketing copy, skip it.
-- Aim for at least 10 items if the source contains them.
+- Return ONLY genuine menu items. Skip headings, contact info, hours, addresses, marketing copy.
+- Be EXHAUSTIVE — if the source clearly lists 30+ dishes across multiple categories, return them all.
 
 Structured candidates:
 ${candidateBlock}
 
-Full page text (for additional context, may contain menu data not in the candidates):
-${fullText.slice(0, 6000)}`;
+Full page text from all crawled pages (additional context, may contain menu data not in the candidates):
+${fullText.slice(0, 12000)}`;
 
   const body = {
     model: GROQ_MODEL,
@@ -220,15 +360,20 @@ ${fullText.slice(0, 6000)}`;
   const parsed = JSON.parse(toolCall.function.arguments);
   const items = (parsed.items ?? []) as ParsedItem[];
 
-  // Final sanity filter
-  return items
-    .filter((i) => i.name && i.name.length >= 2 && i.name.length <= 120)
-    .map((i) => ({
+  // Final sanity filter + dedupe by lowercased name.
+  const byName = new Map<string, ParsedItem>();
+  for (const i of items) {
+    if (!i.name || i.name.length < 2 || i.name.length > 120) continue;
+    const key = i.name.trim().toLowerCase();
+    if (byName.has(key)) continue;
+    byName.set(key, {
       name: i.name.trim(),
       category: i.category ?? "Other",
       price: i.price?.trim() || null,
       description: i.description?.trim() || null,
-    }));
+    });
+  }
+  return [...byName.values()];
 }
 
 Deno.serve(async (req) => {
@@ -262,7 +407,6 @@ Deno.serve(async (req) => {
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
     const supabase = createClient(supabaseUrl, serviceKey);
 
-    // Upsert restaurant row (pending)
     const { data: restaurant, error: upsertErr } = await supabase
       .from("restaurants")
       .upsert(
@@ -275,12 +419,15 @@ Deno.serve(async (req) => {
     if (upsertErr) throw new Error(`DB upsert failed: ${upsertErr.message}`);
 
     try {
-      console.log("Fetching HTML for", url);
-      const html = await fetchHtml(url);
-      console.log("HTML length:", html.length);
-
-      const { title, candidates, fullText } = extractCandidates(html);
-      console.log(`Extracted ${candidates.length} candidates, title="${title}"`);
+      console.log("Gathering menu corpus for", url);
+      const { title, candidates, fullText, pagesFetched } =
+        await gatherMenuCorpus(url);
+      console.log(
+        `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
+      );
+      console.log(
+        `Extracted ${candidates.length} candidates, fullText=${fullText.length} chars, title="${title}"`,
+      );
 
       const items = await structureWithGroq(groqKey, title, candidates, fullText);
       console.log(`Groq returned ${items.length} items`);
@@ -307,7 +454,6 @@ Deno.serve(async (req) => {
         );
       }
 
-      // Replace existing menu items
       await supabase.from("menu_items").delete().eq("restaurant_id", restaurant.id);
       const { error: insertErr } = await supabase.from("menu_items").insert(
         items.map((i) => ({
@@ -342,6 +488,7 @@ Deno.serve(async (req) => {
           restaurantName: title,
           status: "completed",
           menuItems: savedItems ?? [],
+          pagesFetched,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
