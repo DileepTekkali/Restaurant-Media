@@ -336,7 +336,9 @@ CATEGORY RULES (very important):
 - The website itself uses these section headings, which are the AUTHORITATIVE category names. Prefer them EXACTLY as written (preserve capitalization, spelling, accents):
 ${headingsBlock}
 - Assign each item to the website heading it most clearly belongs under (use the surrounding text in the full page text to decide which heading an item appears under).
-- Only if NO website heading fits an item — or if no headings were detected at all — fall back to a refined generic category from this set: "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other".
+- Only if NO website heading fits an item — or if no headings were detected at all — fall back to a refined generic category from this set: "Starters", "Soups", "Mains", "Sides", "Desserts", "Beverages", "Specials", "Other".
+- Soup dishes (anything described as soup, broth, bisque, chowder, shorba, rasam) MUST go under "Soups" if no website heading exists for them.
+- Items that don't clearly fit any other category go under "Other" — never drop them.
 - Do NOT invent new categories that are neither in the website headings nor in the generic fallback set.
 - Keep category names short (max 40 chars).
 
