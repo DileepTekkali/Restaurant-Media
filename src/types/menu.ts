@@ -21,6 +21,7 @@ export interface ScrapeResponse {
 // We keep their ordering so generic menus look consistent.
 export const GENERIC_CATEGORY_ORDER = [
   "Starters",
+  "Soups",
   "Mains",
   "Sides",
   "Desserts",
@@ -32,6 +33,7 @@ export const GENERIC_CATEGORY_ORDER = [
 // Color tokens for the generic fallback categories.
 const GENERIC_CATEGORY_COLOR_VAR: Record<string, string> = {
   Starters: "--cat-starters",
+  Soups: "--cat-soups",
   Mains: "--cat-mains",
   Desserts: "--cat-desserts",
   Beverages: "--cat-beverages",
@@ -44,6 +46,7 @@ const GENERIC_CATEGORY_COLOR_VAR: Record<string, string> = {
 // a distinct, stable color without us needing to predefine them all.
 const CUSTOM_CATEGORY_PALETTE = [
   "--cat-starters",
+  "--cat-soups",
   "--cat-mains",
   "--cat-desserts",
   "--cat-beverages",
