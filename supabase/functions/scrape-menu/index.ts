@@ -107,16 +107,40 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
     .map(([url]) => url);
 }
 
+// Headings that are clearly NOT food categories.
+const HEADING_BLOCKLIST = [
+  "menu", "our menu", "the menu", "home", "about", "about us", "contact",
+  "contact us", "reservation", "reservations", "book", "booking", "gallery",
+  "location", "locations", "press", "events", "private dining", "careers",
+  "follow us", "newsletter", "sign up", "login", "search", "cart",
+  "order online", "find us", "hours", "opening hours",
+];
+
+function isPlausibleCategoryHeading(raw: string): boolean {
+  const t = raw.replace(/\s+/g, " ").trim();
+  if (!t) return false;
+  if (t.length < 2 || t.length > 60) return false;
+  // Must be mostly letters (allow &, -, /, spaces, apostrophes).
+  if (!/^[A-Za-z][A-Za-z0-9 &/\-'’.]*$/.test(t)) return false;
+  // Avoid sentences.
+  if (t.split(/\s+/).length > 6) return false;
+  if (/[.!?]$/.test(t)) return false;
+  const lower = t.toLowerCase();
+  if (HEADING_BLOCKLIST.includes(lower)) return false;
+  return true;
+}
+
 /**
- * Extract candidate menu text + page title from raw HTML.
+ * Extract candidate menu text + page title + category headings from raw HTML.
  */
 function extractCandidates(html: string): {
   title: string | null;
   candidates: RawCandidate[];
   fullText: string;
+  headings: string[];
 } {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  if (!doc) return { title: null, candidates: [], fullText: "" };
+  if (!doc) return { title: null, candidates: [], fullText: "", headings: [] };
 
   doc.querySelectorAll("script, style, noscript, svg, iframe").forEach((n) => {
     (n as Element).remove();
@@ -126,6 +150,32 @@ function extractCandidates(html: string): {
     doc.querySelector("title")?.textContent?.trim() ||
     doc.querySelector("h1")?.textContent?.trim() ||
     null;
+
+  // Collect candidate category headings: h2-h4, plus elements with class
+  // patterns like "menu-section-title", "category-title", etc.
+  const headingSet = new Set<string>();
+  const headingSelectors = [
+    "h2", "h3", "h4",
+    "[class*='category' i]", "[class*='section-title' i]",
+    "[class*='menu-title' i]", "[class*='menu-heading' i]",
+    "[class*='menu-section' i] > :first-child",
+  ];
+  for (const sel of headingSelectors) {
+    let nodes: NodeListOf<Element>;
+    try {
+      nodes = doc.querySelectorAll(sel) as unknown as NodeListOf<Element>;
+    } catch {
+      continue;
+    }
+    nodes.forEach((node) => {
+      const text = (node.textContent || "").replace(/\s+/g, " ").trim();
+      if (isPlausibleCategoryHeading(text)) {
+        // Title-case-ish: strip trailing punctuation.
+        headingSet.add(text.replace(/[:•·\-–—]+$/, "").trim());
+      }
+    });
+    if (headingSet.size > 60) break;
+  }
 
   const selectors = [
     ".menu-item", ".menu_item", ".dish", ".food-item",
@@ -165,7 +215,12 @@ function extractCandidates(html: string): {
     .trim()
     .slice(0, 16000);
 
-  return { title, candidates: candidates.slice(0, 300), fullText };
+  return {
+    title,
+    candidates: candidates.slice(0, 300),
+    fullText,
+    headings: [...headingSet].slice(0, 60),
+  };
 }
 
 /**
