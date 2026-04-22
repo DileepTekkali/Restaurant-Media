@@ -24,17 +24,24 @@ export const MenuItemCard = ({ item, accentVar }: MenuItemCardProps) => {
         <h3 className="flex-1 text-lg font-semibold leading-tight text-foreground">
           {item.name}
         </h3>
-        {item.price && (
-          <span
-            className="shrink-0 rounded-full px-3 py-1 text-sm font-bold tracking-wide"
-            style={{
-              backgroundColor: `hsl(var(${accentVar}) / 0.12)`,
-              color: accent,
-            }}
-          >
-            {item.price}
-          </span>
-        )}
+        <span
+          className="shrink-0 rounded-full px-3 py-1 text-sm font-bold tracking-wide"
+          style={
+            item.price
+              ? {
+                  backgroundColor: `hsl(var(${accentVar}) / 0.12)`,
+                  color: accent,
+                }
+              : {
+                  backgroundColor: "hsl(var(--muted) / 0.6)",
+                  color: "hsl(var(--muted-foreground))",
+                }
+          }
+          aria-label={item.price ? `Price ${item.price}` : "Price not listed"}
+          title={item.price ? undefined : "Price not listed on website"}
+        >
+          {item.price || "—"}
+        </span>
       </div>
 
       {item.description && (
