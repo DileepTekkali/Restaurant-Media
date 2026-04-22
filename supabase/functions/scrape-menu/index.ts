@@ -422,6 +422,29 @@ ${fullText.slice(0, 12000)}`;
   const parsed = JSON.parse(toolCall.function.arguments);
   const items = (parsed.items ?? []) as ParsedItem[];
 
+  const GENERIC_FALLBACK = new Set([
+    "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other",
+  ]);
+  // Lowercase index of website headings -> canonical (original-case) name.
+  const headingIndex = new Map<string, string>();
+  for (const h of websiteHeadings) headingIndex.set(h.toLowerCase(), h);
+
+  const normalizeCategory = (raw: string | null | undefined): string => {
+    const c = (raw || "").trim();
+    if (!c) return "Other";
+    // Exact / case-insensitive match against a website heading wins.
+    const lower = c.toLowerCase();
+    if (headingIndex.has(lower)) return headingIndex.get(lower)!;
+    // Accept the generic fallback set as-is.
+    if (GENERIC_FALLBACK.has(c)) return c;
+    // Title-case generic match (e.g. "starters" -> "Starters").
+    const titled = c.charAt(0).toUpperCase() + c.slice(1).toLowerCase();
+    if (GENERIC_FALLBACK.has(titled)) return titled;
+    // If headings exist but model invented something new, keep its label
+    // trimmed to a sane length so we don't lose info.
+    return c.slice(0, 40);
+  };
+
   // Final sanity filter + dedupe by lowercased name.
   const byName = new Map<string, ParsedItem>();
   for (const i of items) {
@@ -430,7 +453,7 @@ ${fullText.slice(0, 12000)}`;
     if (byName.has(key)) continue;
     byName.set(key, {
       name: i.name.trim(),
-      category: i.category ?? "Other",
+      category: normalizeCategory(i.category),
       price: i.price?.trim() || null,
       description: i.description?.trim() || null,
     });
@@ -482,16 +505,22 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Gathering menu corpus for", url);
-      const { title, candidates, fullText, pagesFetched } =
+      const { title, candidates, fullText, pagesFetched, headings } =
         await gatherMenuCorpus(url);
       console.log(
         `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
       );
       console.log(
-        `Extracted ${candidates.length} candidates, fullText=${fullText.length} chars, title="${title}"`,
+        `Extracted ${candidates.length} candidates, fullText=${fullText.length} chars, title="${title}", headings=[${headings.join(" | ")}]`,
       );
 
-      const items = await structureWithGroq(groqKey, title, candidates, fullText);
+      const items = await structureWithGroq(
+        groqKey,
+        title,
+        candidates,
+        fullText,
+        headings,
+      );
       console.log(`Groq returned ${items.length} items`);
 
       if (items.length === 0) {
