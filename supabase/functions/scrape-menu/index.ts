@@ -385,7 +385,7 @@ ${fullText.slice(0, 12000)}`;
                     category: {
                       type: "string",
                       description:
-                        "Website's own section heading if available, otherwise one of: Starters, Mains, Desserts, Beverages, Sides, Specials, Other.",
+                        "Website's own section heading if available, otherwise one of: Starters, Soups, Mains, Sides, Desserts, Beverages, Specials, Other.",
                     },
                     price: { type: ["string", "null"] },
                     description: { type: ["string", "null"] },
@@ -425,7 +425,7 @@ ${fullText.slice(0, 12000)}`;
   const items = (parsed.items ?? []) as ParsedItem[];
 
   const GENERIC_FALLBACK = new Set([
-    "Starters", "Mains", "Desserts", "Beverages", "Sides", "Specials", "Other",
+    "Starters", "Soups", "Mains", "Sides", "Desserts", "Beverages", "Specials", "Other",
   ]);
   // Lowercase index of website headings -> canonical (original-case) name.
   const headingIndex = new Map<string, string>();
