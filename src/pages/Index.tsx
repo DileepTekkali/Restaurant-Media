@@ -27,6 +27,7 @@ const Index = () => {
     setStatus("loading");
     setItems([]);
     setRestaurantName(null);
+    setLogoUrl(null);
     setErrorMsg("");
     setSubmittedUrl(url);
     setSelectedIds(new Set());
@@ -52,6 +53,7 @@ const Index = () => {
 
       setItems(data.menuItems);
       setRestaurantName(data.restaurantName ?? null);
+      setLogoUrl(data.logoUrl ?? null);
       setStatus("success");
       toast({
         title: "Menu extracted",
@@ -75,6 +77,7 @@ const Index = () => {
     setErrorMsg("");
     setSubmittedUrl("");
     setRestaurantName(null);
+    setLogoUrl(null);
     setSelectedIds(new Set());
     setStage("menu");
   };
@@ -222,6 +225,7 @@ const Index = () => {
             items={selectedItems}
             restaurantName={restaurantName}
             websiteUrl={submittedUrl}
+            logoUrl={logoUrl}
             onBack={() => setStage("menu")}
           />
         )}
