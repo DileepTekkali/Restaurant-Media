@@ -28,16 +28,56 @@ const FORMATS: FormatSpec[] = [
   { key: "landscape", label: "Landscape 16:9", width: 1600, height: 900, description: "Web / FB cover (1600×900)" },
 ];
 
-/** Build a Pollinations image URL for a dish. Free, no key needed. */
+/* ────────────────────────────────────────────────────────────────
+   Editorial typography — load real fonts before composing.
+   Playfair Display = serif headlines, Inter = sans labels.
+   ──────────────────────────────────────────────────────────────── */
+
+const FONT_CSS_URL =
+  "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,800;1,500&family=Inter:wght@400;500;600;700&display=swap";
+
+let fontsReadyPromise: Promise<void> | null = null;
+async function ensureFontsLoaded(): Promise<void> {
+  if (fontsReadyPromise) return fontsReadyPromise;
+  fontsReadyPromise = (async () => {
+    if (!document.querySelector(`link[data-banner-fonts="true"]`)) {
+      const link = document.createElement("link");
+      link.rel = "stylesheet";
+      link.href = FONT_CSS_URL;
+      link.dataset.bannerFonts = "true";
+      document.head.appendChild(link);
+    }
+    try {
+      await Promise.all([
+        (document as any).fonts?.load("700 80px 'Playfair Display'"),
+        (document as any).fonts?.load("500 40px 'Playfair Display'"),
+        (document as any).fonts?.load("italic 500 40px 'Playfair Display'"),
+        (document as any).fonts?.load("600 24px 'Inter'"),
+        (document as any).fonts?.load("400 22px 'Inter'"),
+      ]);
+      await (document as any).fonts?.ready;
+    } catch {
+      /* ignore — canvas will fall back to system fonts */
+    }
+  })();
+  return fontsReadyPromise;
+}
+
+const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif";
+const SANS = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif";
+
+/* ────────────────────────────────────────────────────────────────
+   Pollinations dish photography
+   ──────────────────────────────────────────────────────────────── */
+
 function pollinationsUrl(item: MenuItem, w: number, h: number): string {
   const parts = [
     "professional food photography of",
     item.name,
     item.description ? `, ${item.description}` : "",
-    ", restaurant menu hero shot, top-down or 45-degree angle, soft natural light, shallow depth of field, on a rustic plate, vibrant colors, high detail, appetizing, magazine quality",
+    ", restaurant menu hero shot, 45-degree angle, soft natural light, shallow depth of field, on a rustic plate, dark moody background, vibrant colors, magazine quality, high detail, appetizing",
   ];
   const prompt = parts.join(" ").slice(0, 380);
-  // seed makes results stable per dish so re-renders don't reshuffle
   const seed = Math.abs(
     [...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0),
   );
@@ -52,7 +92,6 @@ function pollinationsUrl(item: MenuItem, w: number, h: number): string {
   return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
 }
 
-/** Load image with CORS so it can be drawn into the canvas without tainting it. */
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -63,7 +102,10 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/** Wrap text within a max width and return the lines. */
+/* ────────────────────────────────────────────────────────────────
+   Canvas helpers
+   ──────────────────────────────────────────────────────────────── */
+
 function wrapText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -78,19 +120,83 @@ function wrapText(
     if (ctx.measureText(candidate).width > maxWidth && current) {
       lines.push(current);
       current = word;
-      if (lines.length === maxLines - 1) break;
+      if (lines.length === maxLines - 1) {
+        // remaining words go onto last line, will be ellipsised below
+      }
     } else {
       current = candidate;
     }
   }
-  if (current && lines.length < maxLines) lines.push(current);
-  // Add ellipsis if we ran out
-  if (words.join(" ") !== lines.join(" ")) {
-    const last = lines[lines.length - 1] ?? "";
-    lines[lines.length - 1] = last.replace(/[,;:.\s]+$/, "") + "…";
+  if (current) lines.push(current);
+
+  if (lines.length > maxLines) {
+    const kept = lines.slice(0, maxLines);
+    let last = kept[maxLines - 1];
+    while (ctx.measureText(last + "…").width > maxWidth && last.length > 1) {
+      last = last.slice(0, -1);
+    }
+    kept[maxLines - 1] = last.replace(/[,;:.\s]+$/, "") + "…";
+    return kept;
   }
   return lines;
 }
+
+function drawImageCover(
+  ctx: CanvasRenderingContext2D,
+  img: HTMLImageElement,
+  dx: number, dy: number, dw: number, dh: number,
+) {
+  const ar = img.width / img.height;
+  const targetAr = dw / dh;
+  let sx = 0, sy = 0, sw = img.width, sh = img.height;
+  if (ar > targetAr) {
+    sw = img.height * targetAr;
+    sx = (img.width - sw) / 2;
+  } else {
+    sh = img.width / targetAr;
+    sy = (img.height - sh) / 2;
+  }
+  ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number, y: number, w: number, h: number, r: number,
+) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+/** Letter-spaced uppercase text (real tracking, not just font metrics). */
+function drawTrackedText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  y: number,
+  tracking: number,
+  align: "left" | "center" | "right" = "left",
+) {
+  const chars = text.split("");
+  const widths = chars.map((c) => ctx.measureText(c).width);
+  const total = widths.reduce((a, b) => a + b, 0) + tracking * (chars.length - 1);
+  let cursor = x;
+  if (align === "center") cursor = x - total / 2;
+  if (align === "right") cursor = x - total;
+  ctx.textAlign = "left";
+  chars.forEach((c, i) => {
+    ctx.fillText(c, cursor, y);
+    cursor += widths[i] + tracking;
+  });
+}
+
+/* ────────────────────────────────────────────────────────────────
+   Banner composition
+   ──────────────────────────────────────────────────────────────── */
 
 interface ComposeArgs {
   format: FormatSpec;
@@ -99,12 +205,15 @@ interface ComposeArgs {
   dishes: { item: MenuItem; img: HTMLImageElement }[];
 }
 
-/**
- * Compose a single banner. Layouts adapt to format:
- *  - square: 1 hero (top half) + up to 4 dish names below in a list
- *  - story: vertical stack — header / hero / dish list / footer
- *  - landscape: collage on left, dish list panel on right
- */
+// Editorial palette — cream, deep espresso, antique gold.
+const PALETTE = {
+  ink: "#1a1411",
+  cream: "#f5efe4",
+  gold: "#c9a24b",
+  goldSoft: "#e2c179",
+  mute: "rgba(245, 239, 228, 0.72)",
+};
+
 function composeBanner({
   format,
   restaurantName,
@@ -117,258 +226,230 @@ function composeBanner({
   const ctx = canvas.getContext("2d")!;
   const W = format.width;
   const H = format.height;
+  const cleanUrl = websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
 
-  // Background — warm gradient matching the app theme
-  const bg = ctx.createLinearGradient(0, 0, W, H);
-  bg.addColorStop(0, "#7a1d12");
-  bg.addColorStop(0.55, "#c93a1a");
-  bg.addColorStop(1, "#f0a526");
-  ctx.fillStyle = bg;
-  ctx.fillRect(0, 0, W, H);
+  // Pick a hero dish (first selected) — its image becomes the full-bleed background.
+  const hero = dishes[0];
 
-  // Subtle vignette overlay
-  const vignette = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.4, W / 2, H / 2, Math.max(W, H) * 0.75);
-  vignette.addColorStop(0, "rgba(0,0,0,0)");
-  vignette.addColorStop(1, "rgba(0,0,0,0.45)");
-  ctx.fillStyle = vignette;
-  ctx.fillRect(0, 0, W, H);
-
-  const drawImageCover = (img: HTMLImageElement, dx: number, dy: number, dw: number, dh: number) => {
-    const ar = img.width / img.height;
-    const targetAr = dw / dh;
-    let sx = 0, sy = 0, sw = img.width, sh = img.height;
-    if (ar > targetAr) {
-      sw = img.height * targetAr;
-      sx = (img.width - sw) / 2;
-    } else {
-      sh = img.width / targetAr;
-      sy = (img.height - sh) / 2;
-    }
-    ctx.drawImage(img, sx, sy, sw, sh, dx, dy, dw, dh);
-  };
-
-  const roundRectPath = (x: number, y: number, w: number, h: number, r: number) => {
-    ctx.beginPath();
-    ctx.moveTo(x + r, y);
-    ctx.arcTo(x + w, y, x + w, y + h, r);
-    ctx.arcTo(x + w, y + h, x, y + h, r);
-    ctx.arcTo(x, y + h, x, y, r);
-    ctx.arcTo(x, y, x + w, y, r);
-    ctx.closePath();
-  };
-
-  // ====== Layout-specific composition ======
-  if (format.key === "square") {
-    // Top 60% = hero collage; bottom 40% = title + dish list
-    const heroH = Math.round(H * 0.58);
-    const heroY = 0;
-    const cols = Math.min(dishes.length, 4);
-    const cellW = W / cols;
-    dishes.slice(0, cols).forEach((d, i) => {
-      ctx.save();
-      roundRectPath(i * cellW, heroY, cellW, heroH, 0);
-      ctx.clip();
-      drawImageCover(d.img, i * cellW, heroY, cellW, heroH);
-      ctx.restore();
-    });
-    // Dark gradient bottom over hero for legibility around badge
-    const heroFade = ctx.createLinearGradient(0, heroH - 200, 0, heroH);
-    heroFade.addColorStop(0, "rgba(0,0,0,0)");
-    heroFade.addColorStop(1, "rgba(0,0,0,0.55)");
-    ctx.fillStyle = heroFade;
-    ctx.fillRect(0, heroH - 200, W, 200);
-
-    // Bottom panel
-    const panelY = heroH;
-    const panelH = H - heroH;
-    ctx.fillStyle = "rgba(15, 8, 5, 0.92)";
-    ctx.fillRect(0, panelY, W, panelH);
-
-    // Restaurant name
-    ctx.fillStyle = "#f7c873";
-    ctx.font = "700 28px system-ui, -apple-system, 'Segoe UI', sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText("FEATURED MENU", 60, panelY + 60);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "800 56px system-ui, -apple-system, 'Segoe UI', sans-serif";
-    const nameLines = wrapText(ctx, restaurantName, W - 120, 1);
-    ctx.fillText(nameLines[0], 60, panelY + 120);
-
-    // Dish rows
-    const listTop = panelY + 170;
-    const rowGap = 14;
-    const rowH = Math.min(78, (panelH - 230) / Math.max(1, dishes.length));
-    ctx.font = "600 30px system-ui, -apple-system, 'Segoe UI', sans-serif";
-    dishes.forEach((d, i) => {
-      const y = listTop + i * (rowH + rowGap);
-      if (y + rowH > H - 60) return;
-      // accent dot
-      ctx.fillStyle = "#f0a526";
-      ctx.beginPath();
-      ctx.arc(75, y + rowH / 2, 6, 0, Math.PI * 2);
-      ctx.fill();
-      // name
-      ctx.fillStyle = "#ffffff";
-      ctx.textAlign = "left";
-      const nameMax = W - 280;
-      const lines = wrapText(ctx, d.item.name, nameMax, 1);
-      ctx.fillText(lines[0], 100, y + rowH / 2 + 10);
-      // price
-      if (d.item.price) {
-        ctx.fillStyle = "#f7c873";
-        ctx.textAlign = "right";
-        ctx.fillText(d.item.price, W - 60, y + rowH / 2 + 10);
-      }
-    });
-
-    // Footer URL
-    ctx.fillStyle = "rgba(255,255,255,0.65)";
-    ctx.font = "500 22px system-ui, -apple-system, 'Segoe UI', sans-serif";
-    ctx.textAlign = "left";
-    ctx.fillText(websiteUrl.replace(/^https?:\/\//, ""), 60, H - 40);
+  // Full-bleed hero photograph
+  if (hero) {
+    drawImageCover(ctx, hero.img, 0, 0, W, H);
+  } else {
+    ctx.fillStyle = PALETTE.ink;
+    ctx.fillRect(0, 0, W, H);
   }
 
-  if (format.key === "story") {
-    // Top 55% hero, bottom 45% panel
-    const heroH = Math.round(H * 0.55);
-    const cols = Math.min(dishes.length, 2);
-    if (cols === 1) {
-      ctx.save();
-      drawImageCover(dishes[0].img, 0, 0, W, heroH);
-      ctx.restore();
-    } else {
-      const cellW = W / cols;
-      dishes.slice(0, cols).forEach((d, i) => {
-        ctx.save();
-        drawImageCover(d.img, i * cellW, 0, cellW, heroH);
-        ctx.restore();
+  // Editorial darkening + gradient for legibility (NOT a hard panel)
+  const overlay = ctx.createLinearGradient(0, 0, 0, H);
+  overlay.addColorStop(0, "rgba(20, 14, 10, 0.55)");
+  overlay.addColorStop(0.45, "rgba(20, 14, 10, 0.25)");
+  overlay.addColorStop(1, "rgba(20, 14, 10, 0.88)");
+  ctx.fillStyle = overlay;
+  ctx.fillRect(0, 0, W, H);
+
+  // Soft side vignette for depth
+  const side = ctx.createLinearGradient(0, 0, W, 0);
+  side.addColorStop(0, "rgba(20, 14, 10, 0.35)");
+  side.addColorStop(0.5, "rgba(0,0,0,0)");
+  side.addColorStop(1, "rgba(20, 14, 10, 0.35)");
+  ctx.fillStyle = side;
+  ctx.fillRect(0, 0, W, H);
+
+  // Margin used for the hairline frame & content insets
+  const m = Math.round(Math.min(W, H) * 0.045);
+
+  // Hairline gold frame
+  ctx.strokeStyle = "rgba(201, 162, 75, 0.55)";
+  ctx.lineWidth = 1.5;
+  ctx.strokeRect(m, m, W - m * 2, H - m * 2);
+
+  /* ──────────── Top header (eyebrow + restaurant name + small underline) ──────────── */
+  const headerTop = m + Math.round(H * 0.05);
+  // Eyebrow
+  ctx.fillStyle = PALETTE.goldSoft;
+  ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
+  drawTrackedText(
+    ctx,
+    "CHEF'S SELECTION",
+    W / 2,
+    headerTop,
+    Math.round(H * 0.006),
+    "center",
+  );
+
+  // Tiny gold rule under eyebrow
+  ctx.fillStyle = PALETTE.gold;
+  const ruleW = Math.round(W * 0.05);
+  ctx.fillRect(W / 2 - ruleW / 2, headerTop + Math.round(H * 0.012), ruleW, 2);
+
+  // Restaurant name (italic serif — feels editorial / hospitality)
+  ctx.fillStyle = PALETTE.cream;
+  const nameSize = Math.round(H * 0.045);
+  ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "alphabetic";
+  const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
+  ctx.fillText(nameLines[0], W / 2, headerTop + Math.round(H * 0.06));
+
+  /* ──────────── Featured dish — large serif title ──────────── */
+  if (hero) {
+    const titleY = Math.round(H * 0.5);
+    ctx.fillStyle = PALETTE.cream;
+    const titleSize =
+      format.key === "story"
+        ? Math.round(H * 0.06)
+        : format.key === "landscape"
+          ? Math.round(H * 0.085)
+          : Math.round(H * 0.075);
+    ctx.font = `700 ${titleSize}px ${SERIF}`;
+    ctx.textAlign = "center";
+    const titleLines = wrapText(
+      ctx,
+      hero.item.name,
+      W - m * 3,
+      format.key === "landscape" ? 1 : 2,
+    );
+
+    // Subtle text shadow for legibility over photography
+    ctx.shadowColor = "rgba(0,0,0,0.45)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetY = 2;
+    titleLines.forEach((line, i) => {
+      ctx.fillText(line, W / 2, titleY + i * titleSize * 1.05);
+    });
+    ctx.shadowBlur = 0;
+    ctx.shadowOffsetY = 0;
+
+    // Description (small, italic, muted) — only if short enough
+    if (hero.item.description) {
+      ctx.fillStyle = PALETTE.mute;
+      const descSize = Math.round(H * 0.022);
+      ctx.font = `italic 400 ${descSize}px ${SERIF}`;
+      const descLines = wrapText(
+        ctx,
+        hero.item.description,
+        W - m * 4,
+        2,
+      );
+      const descTop = titleY + titleLines.length * titleSize * 1.05 + Math.round(H * 0.03);
+      descLines.forEach((line, i) => {
+        ctx.fillText(line, W / 2, descTop + i * descSize * 1.4);
       });
     }
-    // Hero fade
-    const heroFade = ctx.createLinearGradient(0, heroH - 280, 0, heroH);
-    heroFade.addColorStop(0, "rgba(0,0,0,0)");
-    heroFade.addColorStop(1, "rgba(0,0,0,0.6)");
-    ctx.fillStyle = heroFade;
-    ctx.fillRect(0, heroH - 280, W, 280);
+  }
 
-    // Panel
-    ctx.fillStyle = "rgba(15, 8, 5, 0.94)";
-    ctx.fillRect(0, heroH, W, H - heroH);
+  /* ──────────── Lower panel: companion dishes & price list ──────────── */
+  const companions = dishes.slice(1);
+  const panelTop =
+    format.key === "story"
+      ? Math.round(H * 0.7)
+      : format.key === "landscape"
+        ? Math.round(H * 0.7)
+        : Math.round(H * 0.72);
 
-    // Eyebrow
-    ctx.fillStyle = "#f7c873";
-    ctx.font = "700 32px system-ui, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("TODAY'S MENU", W / 2, heroH + 80);
+  if (companions.length > 0) {
+    // Small "ALSO FEATURING" eyebrow centered
+    ctx.fillStyle = PALETTE.goldSoft;
+    ctx.font = `600 ${Math.round(H * 0.014)}px ${SANS}`;
+    drawTrackedText(
+      ctx,
+      "ALSO FEATURING",
+      W / 2,
+      panelTop,
+      Math.round(H * 0.005),
+      "center",
+    );
 
-    // Restaurant name
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "800 80px system-ui, sans-serif";
-    const nameLines = wrapText(ctx, restaurantName, W - 100, 2);
-    nameLines.forEach((line, i) => {
-      ctx.fillText(line, W / 2, heroH + 170 + i * 90);
-    });
+    // Dish chips — laid out horizontally, no hard panels, just typographic rhythm
+    const chipsTop = panelTop + Math.round(H * 0.03);
+    const visible = companions.slice(0, format.key === "story" ? 4 : 3);
+    const colW = (W - m * 2) / visible.length;
 
-    // Divider
-    ctx.fillStyle = "#f0a526";
-    ctx.fillRect(W / 2 - 80, heroH + 200 + nameLines.length * 90, 160, 4);
+    visible.forEach((d, i) => {
+      const cx = m + colW * (i + 0.5);
 
-    // Dish list (centered)
-    const listTop = heroH + 250 + nameLines.length * 90;
-    const available = H - listTop - 120;
-    const rowH = Math.min(96, available / Math.max(1, dishes.length));
-    dishes.forEach((d, i) => {
-      const y = listTop + i * rowH;
-      if (y + rowH > H - 100) return;
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "700 38px system-ui, sans-serif";
+      // Dish name (serif, smaller)
+      ctx.fillStyle = PALETTE.cream;
+      const dishSize = Math.round(H * 0.022);
+      ctx.font = `500 ${dishSize}px ${SERIF}`;
       ctx.textAlign = "center";
-      const lines = wrapText(ctx, d.item.name, W - 120, 1);
-      ctx.fillText(lines[0], W / 2, y + 44);
+      const dishLines = wrapText(ctx, d.item.name, colW - 30, 2);
+      dishLines.forEach((line, li) => {
+        ctx.fillText(line, cx, chipsTop + (li + 1) * dishSize * 1.2);
+      });
+
+      // Price under it (sans, gold, small)
       if (d.item.price) {
-        ctx.fillStyle = "#f7c873";
-        ctx.font = "600 30px system-ui, sans-serif";
-        ctx.fillText(d.item.price, W / 2, y + 82);
+        ctx.fillStyle = PALETTE.gold;
+        const pSize = Math.round(H * 0.018);
+        ctx.font = `600 ${pSize}px ${SANS}`;
+        const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.012);
+        ctx.fillText(d.item.price, cx, priceY);
+      }
+
+      // Vertical divider between chips
+      if (i < visible.length - 1) {
+        ctx.strokeStyle = "rgba(201, 162, 75, 0.35)";
+        ctx.lineWidth = 1;
+        const dx = m + colW * (i + 1);
+        ctx.beginPath();
+        ctx.moveTo(dx, chipsTop + 8);
+        ctx.lineTo(dx, chipsTop + Math.round(H * 0.085));
+        ctx.stroke();
       }
     });
+  }
 
-    // Footer
-    ctx.fillStyle = "rgba(255,255,255,0.7)";
-    ctx.font = "500 26px system-ui, sans-serif";
+  /* ──────────── Hero price badge (top right, elegant) ──────────── */
+  if (hero?.item.price) {
+    const padX = 22;
+    const padY = 12;
+    ctx.font = `700 ${Math.round(H * 0.022)}px ${SANS}`;
+    const priceText = hero.item.price;
+    const tw = ctx.measureText(priceText).width;
+    const bw = tw + padX * 2;
+    const bh = Math.round(H * 0.022) + padY * 2;
+    const bx = W - m - bw - 6;
+    const by = m + 6;
+
+    // gold pill with thin stroke
+    roundRect(ctx, bx, by, bw, bh, bh / 2);
+    ctx.fillStyle = "rgba(20, 14, 10, 0.55)";
+    ctx.fill();
+    ctx.strokeStyle = PALETTE.gold;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    ctx.fillStyle = PALETTE.goldSoft;
     ctx.textAlign = "center";
-    ctx.fillText(websiteUrl.replace(/^https?:\/\//, ""), W / 2, H - 60);
+    ctx.textBaseline = "middle";
+    ctx.fillText(priceText, bx + bw / 2, by + bh / 2 + 1);
+    ctx.textBaseline = "alphabetic";
   }
 
-  if (format.key === "landscape") {
-    // Left 55% = hero collage, right 45% = info panel
-    const leftW = Math.round(W * 0.55);
-    const rightW = W - leftW;
-    const cols = Math.min(dishes.length, 2);
-    const rows = dishes.length > 2 ? 2 : 1;
-    const cellW = leftW / cols;
-    const cellH = H / rows;
-    dishes.slice(0, cols * rows).forEach((d, i) => {
-      const cx = (i % cols) * cellW;
-      const cy = Math.floor(i / cols) * cellH;
-      ctx.save();
-      drawImageCover(d.img, cx, cy, cellW, cellH);
-      ctx.restore();
-    });
+  /* ──────────── Footer: website URL + tiny gold rule ──────────── */
+  const footY = H - m - Math.round(H * 0.025);
+  ctx.fillStyle = PALETTE.gold;
+  const fRuleW = Math.round(W * 0.04);
+  ctx.fillRect(W / 2 - fRuleW / 2, footY - Math.round(H * 0.025), fRuleW, 1);
 
-    // Right panel
-    ctx.fillStyle = "rgba(15, 8, 5, 0.94)";
-    ctx.fillRect(leftW, 0, rightW, H);
-
-    // Accent bar
-    ctx.fillStyle = "#f0a526";
-    ctx.fillRect(leftW, 0, 8, H);
-
-    const px = leftW + 60;
-    ctx.textAlign = "left";
-
-    ctx.fillStyle = "#f7c873";
-    ctx.font = "700 24px system-ui, sans-serif";
-    ctx.fillText("FEATURED MENU", px, 80);
-
-    ctx.fillStyle = "#ffffff";
-    ctx.font = "800 56px system-ui, sans-serif";
-    const nameLines = wrapText(ctx, restaurantName, rightW - 120, 2);
-    nameLines.forEach((line, i) => {
-      ctx.fillText(line, px, 140 + i * 64);
-    });
-
-    // Dish rows
-    const listTop = 140 + nameLines.length * 64 + 40;
-    const available = H - listTop - 80;
-    const rowH = Math.min(70, available / Math.max(1, dishes.length));
-    dishes.forEach((d, i) => {
-      const y = listTop + i * rowH;
-      if (y + rowH > H - 70) return;
-      ctx.fillStyle = "#f0a526";
-      ctx.beginPath();
-      ctx.arc(px + 6, y + rowH / 2, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.fillStyle = "#ffffff";
-      ctx.font = "600 26px system-ui, sans-serif";
-      const lines = wrapText(ctx, d.item.name, rightW - 220, 1);
-      ctx.fillText(lines[0], px + 28, y + rowH / 2 + 9);
-      if (d.item.price) {
-        ctx.fillStyle = "#f7c873";
-        ctx.textAlign = "right";
-        ctx.fillText(d.item.price, W - 50, y + rowH / 2 + 9);
-        ctx.textAlign = "left";
-      }
-    });
-
-    // Footer
-    ctx.fillStyle = "rgba(255,255,255,0.65)";
-    ctx.font = "500 20px system-ui, sans-serif";
-    ctx.fillText(websiteUrl.replace(/^https?:\/\//, ""), px, H - 40);
-  }
+  ctx.fillStyle = PALETTE.mute;
+  ctx.font = `500 ${Math.round(H * 0.016)}px ${SANS}`;
+  drawTrackedText(
+    ctx,
+    cleanUrl.toUpperCase(),
+    W / 2,
+    footY,
+    Math.round(H * 0.004),
+    "center",
+  );
 
   return canvas;
 }
+
+/* ────────────────────────────────────────────────────────────────
+   Component
+   ──────────────────────────────────────────────────────────────── */
 
 interface BannerState {
   url: string | null;
@@ -390,9 +471,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
   const cancelRef = useRef(false);
 
   const safeName = useMemo(() => restaurantName || "Your Restaurant", [restaurantName]);
-
-  // Cap to 6 dishes — beyond that the banner gets cluttered
-  const cappedItems = useMemo(() => items.slice(0, 6), [items]);
+  const cappedItems = useMemo(() => items.slice(0, 5), [items]);
 
   useEffect(() => {
     cancelRef.current = false;
@@ -404,15 +483,14 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
 
     (async () => {
       try {
-        // Load each dish image once at a moderate resolution; canvases will scale.
+        await ensureFontsLoaded();
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
-            const url = pollinationsUrl(item, 1024, 1024);
+            const url = pollinationsUrl(item, 1280, 1280);
             try {
               const img = await loadImage(url);
               return { item, img };
             } catch {
-              // Fallback transparent 1x1 so layout still works
               const img = await loadImage(
                 "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
               );
@@ -514,7 +592,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
           {safeName}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 ready-to-share formats · dish photography by{" "}
+          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 editorial-grade formats · dish photography by{" "}
           <a
             href="https://pollinations.ai"
             target="_blank"
@@ -526,7 +604,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
         </p>
         {items.length > cappedItems.length && (
           <p className="text-xs text-muted-foreground">
-            Showing first {cappedItems.length} of {items.length} selected — banners stay legible with up to 6 dishes.
+            Showing first {cappedItems.length} of {items.length} selected — first dish is the hero, the rest are featured below.
           </p>
         )}
       </header>
@@ -561,7 +639,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
                   {state.loading && (
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground">
                       <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="text-sm">Rendering banner…</p>
+                      <p className="text-sm">Composing banner…</p>
                     </div>
                   )}
                   {state.error && !state.loading && (
