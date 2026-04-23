@@ -14,6 +14,7 @@ export interface ScrapeResponse {
   restaurantName?: string | null;
   status: "completed" | "failed";
   menuItems: MenuItem[];
+  logoUrl?: string | null;
   error?: string;
 }
 

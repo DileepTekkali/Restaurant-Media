@@ -17,6 +17,7 @@ const Index = () => {
   const [status, setStatus] = useState<Status>("idle");
   const [items, setItems] = useState<MenuItem[]>([]);
   const [restaurantName, setRestaurantName] = useState<string | null>(null);
+  const [logoUrl, setLogoUrl] = useState<string | null>(null);
   const [submittedUrl, setSubmittedUrl] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
