@@ -5,14 +5,23 @@ interface MenuListProps {
   items: MenuItem[];
   restaurantName?: string | null;
   websiteUrl?: string;
+  selectable?: boolean;
+  selectedIds?: Set<string>;
+  onToggleSelect?: (id: string) => void;
+  onSelectCategory?: (ids: string[], allAlreadySelected: boolean) => void;
 }
 
 const GENERIC_SET = new Set<string>(GENERIC_CATEGORY_ORDER);
 
-export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) => {
-  // Group by category, preserving the order categories first appear in the
-  // returned items (which mirrors how the AI emitted them — typically the
-  // order they appear on the source website).
+export const MenuList = ({
+  items,
+  restaurantName,
+  websiteUrl,
+  selectable = false,
+  selectedIds,
+  onToggleSelect,
+  onSelectCategory,
+}: MenuListProps) => {
   const grouped = new Map<string, MenuItem[]>();
   for (const item of items) {
     const cat = (item.category && item.category.trim()) || "Other";
@@ -20,8 +29,6 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
     grouped.get(cat)!.push(item);
   }
 
-  // Sort: website-defined (custom) categories first in insertion order,
-  // generic fallback categories last in their canonical order.
   const allCats = [...grouped.keys()];
   const customCats = allCats.filter((c) => !GENERIC_SET.has(c));
   const genericCats = GENERIC_CATEGORY_ORDER.filter((c) => grouped.has(c));
@@ -52,6 +59,12 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
             <strong className="text-foreground">{orderedCats.length}</strong>{" "}
             categories
           </span>
+          {selectable && selectedIds && (
+            <span>
+              <strong className="text-primary">{selectedIds.size}</strong>{" "}
+              selected
+            </span>
+          )}
         </div>
       </header>
 
@@ -59,6 +72,12 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
         {orderedCats.map((cat) => {
           const accentVar = getCategoryColorVar(cat);
           const catItems = grouped.get(cat)!;
+          const catIds = catItems.map((i) => i.id);
+          const allSelected =
+            selectable && selectedIds
+              ? catIds.every((id) => selectedIds.has(id))
+              : false;
+
           return (
             <div key={cat}>
               <div className="mb-4 flex items-center gap-3">
@@ -73,6 +92,15 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
                   ({catItems.length})
                 </span>
                 <div className="ml-2 flex-1 border-t border-dashed border-border" />
+                {selectable && onSelectCategory && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectCategory(catIds, allSelected)}
+                    className="text-xs font-medium text-primary hover:underline"
+                  >
+                    {allSelected ? "Clear" : "Select all"}
+                  </button>
+                )}
               </div>
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {catItems.map((item) => (
@@ -80,6 +108,9 @@ export const MenuList = ({ items, restaurantName, websiteUrl }: MenuListProps) =
                     key={item.id}
                     item={item}
                     accentVar={accentVar}
+                    selectable={selectable}
+                    selected={selectedIds?.has(item.id)}
+                    onToggleSelect={onToggleSelect}
                   />
                 ))}
               </div>
