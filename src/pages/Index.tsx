@@ -1,14 +1,16 @@
-import { useState } from "react";
-import { ChefHat, Sparkles, AlertCircle, RotateCcw } from "lucide-react";
+import { useMemo, useState } from "react";
+import { ChefHat, Sparkles, AlertCircle, RotateCcw, Wand2 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { UrlInputForm } from "@/components/UrlInputForm";
 import { ScrapingProgress } from "@/components/ScrapingProgress";
 import { MenuList } from "@/components/MenuList";
+import { BannerStudio } from "@/components/BannerStudio";
 import { MenuItem, ScrapeResponse } from "@/types/menu";
 import { Button } from "@/components/ui/button";
 
 type Status = "idle" | "loading" | "success" | "error";
+type Stage = "menu" | "banner";
 
 const Index = () => {
   const { toast } = useToast();
@@ -17,6 +19,8 @@ const Index = () => {
   const [restaurantName, setRestaurantName] = useState<string | null>(null);
   const [submittedUrl, setSubmittedUrl] = useState<string>("");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [stage, setStage] = useState<Stage>("menu");
 
   const handleScrape = async (url: string) => {
     setStatus("loading");
@@ -24,6 +28,8 @@ const Index = () => {
     setRestaurantName(null);
     setErrorMsg("");
     setSubmittedUrl(url);
+    setSelectedIds(new Set());
+    setStage("menu");
 
     try {
       const { data, error } = await supabase.functions.invoke<ScrapeResponse>(
@@ -68,6 +74,42 @@ const Index = () => {
     setErrorMsg("");
     setSubmittedUrl("");
     setRestaurantName(null);
+    setSelectedIds(new Set());
+    setStage("menu");
+  };
+
+  const toggleSelect = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
+
+  const selectCategory = (ids: string[], allAlreadySelected: boolean) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allAlreadySelected) ids.forEach((id) => next.delete(id));
+      else ids.forEach((id) => next.add(id));
+      return next;
+    });
+  };
+
+  const selectedItems = useMemo(
+    () => items.filter((i) => selectedIds.has(i.id)),
+    [items, selectedIds],
+  );
+
+  const goToBanner = () => {
+    if (selectedItems.length === 0) {
+      toast({
+        title: "Pick at least one dish",
+        description: "Tap dishes to select them, then generate banners.",
+      });
+      return;
+    }
+    setStage("banner");
   };
 
   return (
@@ -87,7 +129,7 @@ const Index = () => {
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex">
             <Sparkles className="h-3.5 w-3.5 text-accent" />
-            Phase 1 · Menu extraction
+            {stage === "banner" ? "Phase 2 · Banner studio" : "Phase 1 · Menu extraction"}
           </div>
         </div>
       </header>
@@ -98,17 +140,17 @@ const Index = () => {
             <div className="flex max-w-3xl flex-col items-center gap-5 text-center">
               <div className="inline-flex items-center gap-2 rounded-full border border-primary/20 bg-primary/5 px-4 py-1.5 text-xs font-semibold uppercase tracking-wider text-primary">
                 <Sparkles className="h-3.5 w-3.5" />
-                AI menu scraper
+                AI menu scraper + banner studio
               </div>
               <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl md:text-6xl">
-                Turn any restaurant website into a{" "}
+                Turn any restaurant website into{" "}
                 <span className="bg-gradient-warm bg-clip-text text-transparent">
-                  structured menu
+                  shareable banners
                 </span>
               </h1>
               <p className="max-w-2xl text-lg text-muted-foreground">
-                Paste your restaurant's URL. We'll fetch the page, extract every
-                dish, and clean the data with AI — ready for campaign banners.
+                Paste your restaurant's URL. We'll extract every dish, then let you
+                pick a few favourites and generate ready-to-post campaign banners.
               </p>
             </div>
 
@@ -125,7 +167,7 @@ const Index = () => {
               </span>
               <span className="flex items-center gap-2">
                 <span className="h-1.5 w-1.5 rounded-full bg-[hsl(var(--cat-beverages))]" />
-                Deduplicated
+                Banners in 3 sizes
               </span>
             </div>
           </div>
@@ -151,9 +193,12 @@ const Index = () => {
           </div>
         )}
 
-        {status === "success" && (
+        {status === "success" && stage === "menu" && (
           <div className="flex w-full flex-col items-center gap-8">
-            <div className="flex w-full justify-end">
+            <div className="flex w-full flex-wrap items-center justify-between gap-3">
+              <p className="text-sm text-muted-foreground">
+                Tap dishes to select them, then build banners.
+              </p>
               <Button onClick={reset} variant="outline" size="sm" className="gap-2">
                 <RotateCcw className="h-3.5 w-3.5" />
                 New scrape
@@ -163,13 +208,51 @@ const Index = () => {
               items={items}
               restaurantName={restaurantName}
               websiteUrl={submittedUrl}
+              selectable
+              selectedIds={selectedIds}
+              onToggleSelect={toggleSelect}
+              onSelectCategory={selectCategory}
             />
           </div>
         )}
+
+        {status === "success" && stage === "banner" && (
+          <BannerStudio
+            items={selectedItems}
+            restaurantName={restaurantName}
+            websiteUrl={submittedUrl}
+            onBack={() => setStage("menu")}
+          />
+        )}
       </main>
 
-      <footer className="relative border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-        Built with Lovable Cloud · Phase 1 of restaurant banner generator
+      {/* Sticky selection bar */}
+      {status === "success" && stage === "menu" && selectedIds.size > 0 && (
+        <div className="sticky bottom-4 z-30 mx-auto flex w-full max-w-3xl items-center justify-between gap-4 rounded-full border border-border bg-card/95 px-5 py-3 shadow-elegant backdrop-blur-sm">
+          <div className="flex items-center gap-3 text-sm">
+            <span className="flex h-7 min-w-7 items-center justify-center rounded-full bg-primary px-2 text-xs font-bold text-primary-foreground">
+              {selectedIds.size}
+            </span>
+            <span className="text-foreground">
+              dish{selectedIds.size === 1 ? "" : "es"} selected
+            </span>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-muted-foreground hover:text-foreground hover:underline"
+            >
+              Clear
+            </button>
+          </div>
+          <Button onClick={goToBanner} className="gap-2">
+            <Wand2 className="h-4 w-4" />
+            Generate banners
+          </Button>
+        </div>
+      )}
+
+      <footer className="relative mt-12 border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
+        Built with Lovable Cloud · Phase 2 — restaurant banner generator
       </footer>
     </div>
   );

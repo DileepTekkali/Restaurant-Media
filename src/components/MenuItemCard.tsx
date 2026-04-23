@@ -1,17 +1,48 @@
 import { MenuItem } from "@/types/menu";
-import { Tag } from "lucide-react";
+import { Tag, Check } from "lucide-react";
+import { cn } from "@/lib/utils";
 
 interface MenuItemCardProps {
   item: MenuItem;
   accentVar: string;
+  selectable?: boolean;
+  selected?: boolean;
+  onToggleSelect?: (id: string) => void;
 }
 
-export const MenuItemCard = ({ item, accentVar }: MenuItemCardProps) => {
+export const MenuItemCard = ({
+  item,
+  accentVar,
+  selectable = false,
+  selected = false,
+  onToggleSelect,
+}: MenuItemCardProps) => {
   const accent = `hsl(var(${accentVar}))`;
+
+  const handleClick = () => {
+    if (selectable && onToggleSelect) onToggleSelect(item.id);
+  };
 
   return (
     <article
-      className="group relative flex h-full flex-col gap-3 rounded-xl border border-border bg-card p-5 shadow-soft transition-smooth hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-elegant"
+      onClick={handleClick}
+      role={selectable ? "button" : undefined}
+      tabIndex={selectable ? 0 : undefined}
+      onKeyDown={(e) => {
+        if (selectable && (e.key === "Enter" || e.key === " ")) {
+          e.preventDefault();
+          handleClick();
+        }
+      }}
+      aria-pressed={selectable ? selected : undefined}
+      className={cn(
+        "group relative flex h-full flex-col gap-3 rounded-xl border bg-card p-5 shadow-soft transition-smooth",
+        selectable && "cursor-pointer hover:-translate-y-0.5 hover:shadow-elegant",
+        !selectable && "hover:-translate-y-0.5 hover:border-primary/30 hover:shadow-elegant",
+        selected
+          ? "border-primary ring-2 ring-primary/40"
+          : "border-border hover:border-primary/30",
+      )}
       style={{ ["--accent" as string]: accent }}
     >
       <div
@@ -20,8 +51,27 @@ export const MenuItemCard = ({ item, accentVar }: MenuItemCardProps) => {
         aria-hidden
       />
 
+      {selectable && (
+        <div
+          className={cn(
+            "absolute right-3 top-3 flex h-6 w-6 items-center justify-center rounded-md border transition-smooth",
+            selected
+              ? "border-primary bg-primary text-primary-foreground"
+              : "border-border bg-background/80 text-transparent group-hover:border-primary/50",
+          )}
+          aria-hidden
+        >
+          <Check className="h-4 w-4" />
+        </div>
+      )}
+
       <div className="flex items-start justify-between gap-4">
-        <h3 className="flex-1 text-lg font-semibold leading-tight text-foreground">
+        <h3
+          className={cn(
+            "flex-1 text-lg font-semibold leading-tight text-foreground",
+            selectable && "pr-8",
+          )}
+        >
           {item.name}
         </h3>
         <span
