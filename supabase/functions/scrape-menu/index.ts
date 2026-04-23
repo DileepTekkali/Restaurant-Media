@@ -330,6 +330,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   fullText: string;
   pagesFetched: string[];
   headings: string[];
+  logoUrl: string | null;
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
@@ -342,6 +343,8 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
   pagesFetched.push(entryUrl);
+
+  const logoUrl = findLogoUrl(entryHtml, entryUrl);
 
   const entry = extractCandidates(entryHtml);
   title = entry.title;
@@ -395,6 +398,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     fullText,
     pagesFetched,
     headings: [...headingSet].slice(0, 60),
+    logoUrl,
   };
 }
 
