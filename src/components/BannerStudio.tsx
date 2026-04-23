@@ -266,8 +266,38 @@ function composeBanner({
   ctx.lineWidth = 1.5;
   ctx.strokeRect(m, m, W - m * 2, H - m * 2);
 
-  /* ──────────── Top header (eyebrow + restaurant name + small underline) ──────────── */
-  const headerTop = m + Math.round(H * 0.05);
+  /* ──────────── Top header (logo + eyebrow + restaurant name) ──────────── */
+  let headerTop = m + Math.round(H * 0.05);
+
+  // Restaurant logo (centered above the eyebrow) — drawn as a soft luminous mark.
+  if (logo) {
+    const logoMaxH = Math.round(H * 0.075);
+    const logoMaxW = Math.round(W * 0.35);
+    const ratio = logo.width / logo.height || 1;
+    let lh = logoMaxH;
+    let lw = lh * ratio;
+    if (lw > logoMaxW) {
+      lw = logoMaxW;
+      lh = lw / ratio;
+    }
+    const lx = (W - lw) / 2;
+    const ly = headerTop;
+
+    // Subtle cream backdrop pill so dark-on-dark logos still read.
+    const padX = Math.round(lw * 0.08) + 14;
+    const padY = Math.round(lh * 0.18) + 10;
+    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 12);
+    ctx.fillStyle = "rgba(245, 239, 228, 0.92)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(201, 162, 75, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.drawImage(logo, lx, ly, lw, lh);
+
+    headerTop = ly + lh + Math.round(H * 0.035);
+  }
+
   // Eyebrow
   ctx.fillStyle = PALETTE.goldSoft;
   ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
