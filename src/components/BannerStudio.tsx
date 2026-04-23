@@ -493,7 +493,7 @@ interface BannerState {
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "banner";
 
-export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: BannerStudioProps) => {
+export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBack }: BannerStudioProps) => {
   const { toast } = useToast();
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
     square: { url: null, loading: true, error: null },
@@ -517,6 +517,25 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
     (async () => {
       try {
         await ensureFontsLoaded();
+
+        // Load the restaurant logo (CORS-safe via weserv proxy). Optional — null on failure.
+        let logo: HTMLImageElement | null = null;
+        if (logoUrl) {
+          const stripped = logoUrl.replace(/^https?:\/\//, "");
+          const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(stripped)}&w=600&output=png`;
+          try {
+            logo = await loadImage(proxied);
+          } catch {
+            try {
+              // Direct fallback (works when the host sends permissive CORS, e.g. many CDNs)
+              logo = await loadImage(logoUrl);
+            } catch {
+              logo = null;
+            }
+          }
+        }
+        if (cancelRef.current) return;
+
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
             const url = pollinationsUrl(item, 1280, 1280);
@@ -541,6 +560,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
               restaurantName: safeName,
               websiteUrl,
               dishes: dishImages,
+              logo,
             });
             const url = canvas.toDataURL("image/png");
             setBanners((prev) => ({
