@@ -9,6 +9,7 @@ interface BannerStudioProps {
   items: MenuItem[];
   restaurantName: string | null;
   websiteUrl: string;
+  logoUrl?: string | null;
   onBack: () => void;
 }
 
@@ -203,6 +204,7 @@ interface ComposeArgs {
   restaurantName: string;
   websiteUrl: string;
   dishes: { item: MenuItem; img: HTMLImageElement }[];
+  logo: HTMLImageElement | null;
 }
 
 // Editorial palette — cream, deep espresso, antique gold.
@@ -219,6 +221,7 @@ function composeBanner({
   restaurantName,
   websiteUrl,
   dishes,
+  logo,
 }: ComposeArgs): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = format.width;
