@@ -683,6 +683,7 @@ Deno.serve(async (req) => {
           status: "completed",
           menuItems: savedItems ?? [],
           pagesFetched,
+          logoUrl,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
