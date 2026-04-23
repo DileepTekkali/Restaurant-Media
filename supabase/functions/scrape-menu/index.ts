@@ -607,8 +607,9 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Gathering menu corpus for", url);
-      const { title, candidates, fullText, pagesFetched, headings } =
+      const { title, candidates, fullText, pagesFetched, headings, logoUrl } =
         await gatherMenuCorpus(url);
+      console.log(`Detected logo: ${logoUrl ?? "(none)"}`);
       console.log(
         `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
       );
