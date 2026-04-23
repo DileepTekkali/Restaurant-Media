@@ -9,6 +9,7 @@ interface BannerStudioProps {
   items: MenuItem[];
   restaurantName: string | null;
   websiteUrl: string;
+  logoUrl?: string | null;
   onBack: () => void;
 }
 
@@ -203,6 +204,7 @@ interface ComposeArgs {
   restaurantName: string;
   websiteUrl: string;
   dishes: { item: MenuItem; img: HTMLImageElement }[];
+  logo: HTMLImageElement | null;
 }
 
 // Editorial palette — cream, deep espresso, antique gold.
@@ -219,6 +221,7 @@ function composeBanner({
   restaurantName,
   websiteUrl,
   dishes,
+  logo,
 }: ComposeArgs): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = format.width;
@@ -263,8 +266,38 @@ function composeBanner({
   ctx.lineWidth = 1.5;
   ctx.strokeRect(m, m, W - m * 2, H - m * 2);
 
-  /* ──────────── Top header (eyebrow + restaurant name + small underline) ──────────── */
-  const headerTop = m + Math.round(H * 0.05);
+  /* ──────────── Top header (logo + eyebrow + restaurant name) ──────────── */
+  let headerTop = m + Math.round(H * 0.05);
+
+  // Restaurant logo (centered above the eyebrow) — drawn as a soft luminous mark.
+  if (logo) {
+    const logoMaxH = Math.round(H * 0.075);
+    const logoMaxW = Math.round(W * 0.35);
+    const ratio = logo.width / logo.height || 1;
+    let lh = logoMaxH;
+    let lw = lh * ratio;
+    if (lw > logoMaxW) {
+      lw = logoMaxW;
+      lh = lw / ratio;
+    }
+    const lx = (W - lw) / 2;
+    const ly = headerTop;
+
+    // Subtle cream backdrop pill so dark-on-dark logos still read.
+    const padX = Math.round(lw * 0.08) + 14;
+    const padY = Math.round(lh * 0.18) + 10;
+    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 12);
+    ctx.fillStyle = "rgba(245, 239, 228, 0.92)";
+    ctx.fill();
+    ctx.strokeStyle = "rgba(201, 162, 75, 0.55)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+
+    ctx.drawImage(logo, lx, ly, lw, lh);
+
+    headerTop = ly + lh + Math.round(H * 0.035);
+  }
+
   // Eyebrow
   ctx.fillStyle = PALETTE.goldSoft;
   ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
@@ -460,7 +493,7 @@ interface BannerState {
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "banner";
 
-export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: BannerStudioProps) => {
+export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBack }: BannerStudioProps) => {
   const { toast } = useToast();
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
     square: { url: null, loading: true, error: null },
@@ -484,6 +517,25 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
     (async () => {
       try {
         await ensureFontsLoaded();
+
+        // Load the restaurant logo (CORS-safe via weserv proxy). Optional — null on failure.
+        let logo: HTMLImageElement | null = null;
+        if (logoUrl) {
+          const stripped = logoUrl.replace(/^https?:\/\//, "");
+          const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(stripped)}&w=600&output=png`;
+          try {
+            logo = await loadImage(proxied);
+          } catch {
+            try {
+              // Direct fallback (works when the host sends permissive CORS, e.g. many CDNs)
+              logo = await loadImage(logoUrl);
+            } catch {
+              logo = null;
+            }
+          }
+        }
+        if (cancelRef.current) return;
+
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
             const url = pollinationsUrl(item, 1280, 1280);
@@ -508,6 +560,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
               restaurantName: safeName,
               websiteUrl,
               dishes: dishImages,
+              logo,
             });
             const url = canvas.toDataURL("image/png");
             setBanners((prev) => ({
@@ -539,7 +592,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, onBack }: Bann
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, generationKey, toast]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, toast]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];

@@ -59,6 +59,102 @@ async function fetchHtml(url: string): Promise<string> {
  * Find links on a page that look like they lead to menu content.
  * Resolves them against the page's base URL and dedupes.
  */
+/**
+ * Try to find the restaurant logo in the HTML. Strategy:
+ *  1. og:image / twitter:image meta tags (often the brand image).
+ *  2. <link rel="icon"> / apple-touch-icon (high-res favicon).
+ *  3. <img> elements whose src/alt/class/id mention "logo" or "brand".
+ *  4. Fallback: /favicon.ico at the site root.
+ * Returns an absolute URL or null.
+ */
+function findLogoUrl(html: string, baseUrl: string): string | null {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  if (!doc) return null;
+  const base = new URL(baseUrl);
+
+  const resolve = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const v = raw.trim();
+    if (!v || v.startsWith("data:")) return null;
+    try {
+      return new URL(v, base).toString();
+    } catch {
+      return null;
+    }
+  };
+
+  // 1. Logo-ish <img> tags first — usually the actual brand mark.
+  const imgs = doc.querySelectorAll("img") as unknown as NodeListOf<Element>;
+  let bestLogo: string | null = null;
+  let bestScore = 0;
+  imgs.forEach((node) => {
+    const img = node as Element;
+    const src = img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("data-lazy-src");
+    if (!src) return;
+    const alt = (img.getAttribute("alt") || "").toLowerCase();
+    const cls = (img.getAttribute("class") || "").toLowerCase();
+    const id = (img.getAttribute("id") || "").toLowerCase();
+    const parentCls = ((img.parentElement?.getAttribute("class") || "") as string).toLowerCase();
+    const haystack = `${src.toLowerCase()} ${alt} ${cls} ${id} ${parentCls}`;
+    let score = 0;
+    if (haystack.includes("logo")) score += 5;
+    if (haystack.includes("brand")) score += 3;
+    if (haystack.includes("site-identity") || haystack.includes("site-title")) score += 2;
+    if (alt.includes("home")) score += 1;
+    // Penalize obvious non-logo images
+    if (haystack.includes("hero") || haystack.includes("banner") || haystack.includes("cover")) score -= 2;
+    if (score > bestScore) {
+      const resolved = resolve(src);
+      if (resolved && /\.(svg|png|jpe?g|webp|gif|ico)(\?|$)/i.test(resolved)) {
+        bestScore = score;
+        bestLogo = resolved;
+      }
+    }
+  });
+  if (bestLogo && bestScore >= 3) return bestLogo;
+
+  // 2. og:image / twitter:image
+  const ogImage =
+    doc.querySelector('meta[property="og:image"]')?.getAttribute("content") ||
+    doc.querySelector('meta[name="og:image"]')?.getAttribute("content") ||
+    doc.querySelector('meta[name="twitter:image"]')?.getAttribute("content") ||
+    doc.querySelector('meta[name="twitter:image:src"]')?.getAttribute("content");
+  const ogResolved = resolve(ogImage);
+  if (ogResolved) return ogResolved;
+
+  // Fall back to whichever logo-ish img we found, even if score was low.
+  if (bestLogo) return bestLogo;
+
+  // 3. apple-touch-icon (usually 180px+ and clean)
+  const apple = doc.querySelector('link[rel="apple-touch-icon"]')?.getAttribute("href") ||
+    doc.querySelector('link[rel="apple-touch-icon-precomposed"]')?.getAttribute("href");
+  const appleResolved = resolve(apple);
+  if (appleResolved) return appleResolved;
+
+  // 4. <link rel="icon"> (prefer largest sizes)
+  const iconLinks = doc.querySelectorAll('link[rel~="icon"]') as unknown as NodeListOf<Element>;
+  let bestIcon: string | null = null;
+  let bestIconSize = 0;
+  iconLinks.forEach((node) => {
+    const link = node as Element;
+    const href = link.getAttribute("href");
+    if (!href) return;
+    const sizes = link.getAttribute("sizes") || "";
+    const sz = parseInt(sizes.split("x")[0], 10) || 16;
+    if (sz > bestIconSize) {
+      const r = resolve(href);
+      if (r) {
+        bestIconSize = sz;
+        bestIcon = r;
+      }
+    }
+  });
+  if (bestIcon) return bestIcon;
+
+  // 5. Final fallback: /favicon.ico
+  return resolve("/favicon.ico");
+}
+
 function discoverMenuLinks(html: string, baseUrl: string): string[] {
   const doc = new DOMParser().parseFromString(html, "text/html");
   if (!doc) return [];
@@ -234,6 +330,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   fullText: string;
   pagesFetched: string[];
   headings: string[];
+  logoUrl: string | null;
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
@@ -246,6 +343,8 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
   pagesFetched.push(entryUrl);
+
+  const logoUrl = findLogoUrl(entryHtml, entryUrl);
 
   const entry = extractCandidates(entryHtml);
   title = entry.title;
@@ -299,6 +398,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     fullText,
     pagesFetched,
     headings: [...headingSet].slice(0, 60),
+    logoUrl,
   };
 }
 
@@ -507,8 +607,9 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Gathering menu corpus for", url);
-      const { title, candidates, fullText, pagesFetched, headings } =
+      const { title, candidates, fullText, pagesFetched, headings, logoUrl } =
         await gatherMenuCorpus(url);
+      console.log(`Detected logo: ${logoUrl ?? "(none)"}`);
       console.log(
         `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
       );
@@ -582,6 +683,7 @@ Deno.serve(async (req) => {
           status: "completed",
           menuItems: savedItems ?? [],
           pagesFetched,
+          logoUrl,
         }),
         { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
