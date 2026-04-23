@@ -592,7 +592,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, generationKey, toast]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, toast]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
