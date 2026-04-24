@@ -805,6 +805,7 @@ export const BannerStudio = ({
   const safeName = useMemo(() => restaurantName || "Your Restaurant", [restaurantName]);
   const cappedItems = useMemo(() => items.slice(0, 5), [items]);
   const theme = useMemo(() => resolveCampaignTheme(campaign), [campaign]);
+  const currency = useMemo(() => detectMenuCurrency(items), [items]);
 
   useEffect(() => {
     cancelRef.current = false;
