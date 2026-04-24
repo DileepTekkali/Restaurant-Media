@@ -4,12 +4,18 @@ import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { MenuItem } from "@/types/menu";
+import {
+  CampaignChoice,
+  CampaignTheme,
+  resolveCampaignTheme,
+} from "@/types/campaign";
 
 interface BannerStudioProps {
   items: MenuItem[];
   restaurantName: string | null;
   websiteUrl: string;
   logoUrl?: string | null;
+  campaign: CampaignChoice;
   onBack: () => void;
 }
 
@@ -29,10 +35,7 @@ const FORMATS: FormatSpec[] = [
   { key: "landscape", label: "Landscape 16:9", width: 1600, height: 900, description: "Web / FB cover (1600×900)" },
 ];
 
-/* ────────────────────────────────────────────────────────────────
-   Editorial typography — load real fonts before composing.
-   Playfair Display = serif headlines, Inter = sans labels.
-   ──────────────────────────────────────────────────────────────── */
+/* ────────────── Fonts ────────────── */
 
 const FONT_CSS_URL =
   "https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,500;0,700;0,800;1,500&family=Inter:wght@400;500;600;700&display=swap";
@@ -58,7 +61,7 @@ async function ensureFontsLoaded(): Promise<void> {
       ]);
       await (document as any).fonts?.ready;
     } catch {
-      /* ignore — canvas will fall back to system fonts */
+      /* ignore */
     }
   })();
   return fontsReadyPromise;
@@ -67,21 +70,21 @@ async function ensureFontsLoaded(): Promise<void> {
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif";
 const SANS = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif";
 
-/* ────────────────────────────────────────────────────────────────
-   Pollinations dish photography
-   ──────────────────────────────────────────────────────────────── */
+/* ────────────── Pollinations dish photography ────────────── */
 
-function pollinationsUrl(item: MenuItem, w: number, h: number): string {
+function pollinationsUrl(item: MenuItem, w: number, h: number, theme: CampaignTheme, salt: number): string {
   const parts = [
     "professional food photography of",
     item.name,
     item.description ? `, ${item.description}` : "",
-    ", restaurant menu hero shot, 45-degree angle, soft natural light, shallow depth of field, on a rustic plate, dark moody background, vibrant colors, magazine quality, high detail, appetizing",
+    `, ${theme.photoStyle}`,
+    ", restaurant menu hero shot, 45-degree angle, shallow depth of field, magazine quality, high detail, appetizing",
   ];
-  const prompt = parts.join(" ").slice(0, 380);
-  const seed = Math.abs(
+  const prompt = parts.join(" ").slice(0, 420);
+  const baseSeed = Math.abs(
     [...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0),
   );
+  const seed = (baseSeed + salt) % 9_999_999;
   const params = new URLSearchParams({
     width: String(w),
     height: String(h),
@@ -103,9 +106,7 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Canvas helpers
-   ──────────────────────────────────────────────────────────────── */
+/* ────────────── Canvas helpers ────────────── */
 
 function wrapText(
   ctx: CanvasRenderingContext2D,
@@ -121,15 +122,11 @@ function wrapText(
     if (ctx.measureText(candidate).width > maxWidth && current) {
       lines.push(current);
       current = word;
-      if (lines.length === maxLines - 1) {
-        // remaining words go onto last line, will be ellipsised below
-      }
     } else {
       current = candidate;
     }
   }
   if (current) lines.push(current);
-
   if (lines.length > maxLines) {
     const kept = lines.slice(0, maxLines);
     let last = kept[maxLines - 1];
@@ -140,6 +137,11 @@ function wrapText(
     return kept;
   }
   return lines;
+}
+
+/** Measure wrapped text height for layout planning. */
+function measureWrappedHeight(lineCount: number, fontSize: number, lineHeight = 1.1): number {
+  return Math.round(lineCount * fontSize * lineHeight);
 }
 
 function drawImageCover(
@@ -173,7 +175,6 @@ function roundRect(
   ctx.closePath();
 }
 
-/** Letter-spaced uppercase text (real tracking, not just font metrics). */
 function drawTrackedText(
   ctx: CanvasRenderingContext2D,
   text: string,
@@ -195,9 +196,212 @@ function drawTrackedText(
   });
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Banner composition
-   ──────────────────────────────────────────────────────────────── */
+/* ────────────── Decorative motifs (per-campaign) ────────────── */
+
+function drawMotif(
+  ctx: CanvasRenderingContext2D,
+  theme: CampaignTheme,
+  W: number,
+  H: number,
+) {
+  ctx.save();
+  switch (theme.motif) {
+    case "snow":
+    case "lights": {
+      // soft glowing dots scattered along top
+      const count = 28;
+      for (let i = 0; i < count; i++) {
+        const x = (i / count) * W + ((i * 137) % 50);
+        const y = (H * 0.04) + ((i * 53) % Math.round(H * 0.18));
+        const r = 2 + ((i * 7) % 4);
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, r * 6);
+        grad.addColorStop(0, theme.accentSoft);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, r * 6, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "garland": {
+      // gentle scallop arc with berries across the very top
+      const y = Math.round(H * 0.085);
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      const segs = 14;
+      const segW = W / segs;
+      for (let i = 0; i <= segs; i++) {
+        const x = i * segW;
+        if (i === 0) ctx.moveTo(x, y);
+        else {
+          const cpX = x - segW / 2;
+          const cpY = y + (i % 2 === 0 ? 14 : -14);
+          ctx.quadraticCurveTo(cpX, cpY, x, y);
+        }
+      }
+      ctx.stroke();
+      // berries
+      for (let i = 0; i < segs; i++) {
+        const x = i * segW + segW / 2;
+        ctx.fillStyle = theme.accentSoft;
+        ctx.beginPath();
+        ctx.arc(x, y + (i % 2 === 0 ? 14 : -14), 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "diya": {
+      // glowing diya orbs across the bottom with flame highlights
+      const y = Math.round(H * 0.93);
+      const count = 7;
+      for (let i = 0; i < count; i++) {
+        const x = ((i + 0.5) / count) * W;
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, 60);
+        grad.addColorStop(0, theme.accentSoft);
+        grad.addColorStop(0.4, "rgba(245, 158, 11, 0.35)");
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, 60, 0, Math.PI * 2);
+        ctx.fill();
+        // flame dot
+        ctx.fillStyle = theme.accent;
+        ctx.beginPath();
+        ctx.ellipse(x, y - 4, 3, 8, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+    case "lantern": {
+      // hanging lantern glows along the top
+      const y = Math.round(H * 0.06);
+      const count = 5;
+      for (let i = 0; i < count; i++) {
+        const x = ((i + 0.5) / count) * W;
+        // string
+        ctx.strokeStyle = "rgba(255,255,255,0.18)";
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(x, 0);
+        ctx.lineTo(x, y - 18);
+        ctx.stroke();
+        // lantern body (rounded rect glow)
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, 50);
+        grad.addColorStop(0, theme.accentSoft);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, 50, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.fillStyle = theme.accent;
+        roundRect(ctx, x - 12, y - 16, 24, 32, 8);
+        ctx.fill();
+      }
+      break;
+    }
+    case "hearts": {
+      const count = 12;
+      for (let i = 0; i < count; i++) {
+        const x = ((i * 97) % W);
+        const y = Math.round(H * 0.05) + ((i * 41) % Math.round(H * 0.15));
+        const s = 8 + ((i * 3) % 6);
+        ctx.fillStyle = theme.accentSoft;
+        ctx.globalAlpha = 0.55;
+        // crude heart from two arcs + triangle
+        ctx.beginPath();
+        ctx.moveTo(x, y + s);
+        ctx.bezierCurveTo(x - s, y, x - s, y - s, x, y - s / 2);
+        ctx.bezierCurveTo(x + s, y - s, x + s, y, x, y + s);
+        ctx.fill();
+        ctx.globalAlpha = 1;
+      }
+      break;
+    }
+    case "leaves": {
+      // scattered leaf-like ovals along the bottom
+      const y = Math.round(H * 0.92);
+      for (let i = 0; i < 14; i++) {
+        const x = ((i + 0.5) / 14) * W + ((i * 11) % 30);
+        const rot = ((i * 37) % 360) * (Math.PI / 180);
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(rot);
+        ctx.fillStyle = i % 2 === 0 ? theme.accent : theme.accentSoft;
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.ellipse(0, 0, 18, 7, 0, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.restore();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+    case "petals": {
+      // small color powder bursts in corners
+      [
+        { x: W * 0.05, y: H * 0.12, c: theme.accent },
+        { x: W * 0.95, y: H * 0.18, c: theme.accentSoft },
+        { x: W * 0.1, y: H * 0.88, c: theme.accentSoft },
+        { x: W * 0.92, y: H * 0.9, c: theme.accent },
+      ].forEach(({ x, y, c }) => {
+        const grad = ctx.createRadialGradient(x, y, 0, x, y, 110);
+        grad.addColorStop(0, c);
+        grad.addColorStop(1, "rgba(0,0,0,0)");
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(x, y, 110, 0, Math.PI * 2);
+        ctx.fill();
+      });
+      break;
+    }
+    case "eggs": {
+      // pastel ovals on the bottom band
+      const y = Math.round(H * 0.94);
+      const colors = [theme.accent, theme.accentSoft, "#fde68a", "#bae6fd", "#fbcfe8"];
+      for (let i = 0; i < 8; i++) {
+        const x = ((i + 0.5) / 8) * W;
+        ctx.fillStyle = colors[i % colors.length];
+        ctx.globalAlpha = 0.7;
+        ctx.beginPath();
+        ctx.ellipse(x, y, 10, 14, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.globalAlpha = 1;
+      break;
+    }
+    case "stamp": {
+      // a small circular stamp top-left like "fresh today"
+      const cx = Math.round(W * 0.085);
+      const cy = Math.round(H * 0.085);
+      const r = Math.round(Math.min(W, H) * 0.05);
+      ctx.strokeStyle = theme.accent;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r - 6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = theme.accent;
+      ctx.font = `700 ${Math.round(r * 0.3)}px ${SANS}`;
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("FRESH", cx, cy - 4);
+      ctx.fillText("TODAY", cx, cy + r * 0.32);
+      ctx.textBaseline = "alphabetic";
+      break;
+    }
+    case "editorial":
+    default:
+      /* nothing — pure editorial */
+      break;
+  }
+  ctx.restore();
+}
+
+/* ────────────── Banner composition ────────────── */
 
 interface ComposeArgs {
   format: FormatSpec;
@@ -205,16 +409,8 @@ interface ComposeArgs {
   websiteUrl: string;
   dishes: { item: MenuItem; img: HTMLImageElement }[];
   logo: HTMLImageElement | null;
+  theme: CampaignTheme;
 }
-
-// Editorial palette — cream, deep espresso, antique gold.
-const PALETTE = {
-  ink: "#1a1411",
-  cream: "#f5efe4",
-  gold: "#c9a24b",
-  goldSoft: "#e2c179",
-  mute: "rgba(245, 239, 228, 0.72)",
-};
 
 function composeBanner({
   format,
@@ -222,6 +418,7 @@ function composeBanner({
   websiteUrl,
   dishes,
   logo,
+  theme,
 }: ComposeArgs): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = format.width;
@@ -230,49 +427,53 @@ function composeBanner({
   const W = format.width;
   const H = format.height;
   const cleanUrl = websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
-
-  // Pick a hero dish (first selected) — its image becomes the full-bleed background.
   const hero = dishes[0];
 
-  // Full-bleed hero photograph
+  /* ──── Layout bands (non-overlapping by construction) ──── */
+  // Story 9:16 has more vertical room → photo gets a smaller portion to leave room for text.
+  // Square / landscape → photo takes ~55-60% of height.
+  const headerH = Math.round(H * (format.key === "story" ? 0.18 : 0.22));
+  const photoH = Math.round(H * (format.key === "story" ? 0.46 : 0.5));
+  const photoTop = headerH;
+  const photoBottom = headerH + photoH;
+  const contentTop = photoBottom; // text starts strictly below the photo
+  const contentH = H - contentTop;
+
+  /* ──── 1) Solid background (theme ink) ──── */
+  ctx.fillStyle = theme.ink;
+  ctx.fillRect(0, 0, W, H);
+
+  /* ──── 2) Photo band ──── */
   if (hero) {
-    drawImageCover(ctx, hero.img, 0, 0, W, H);
-  } else {
-    ctx.fillStyle = PALETTE.ink;
-    ctx.fillRect(0, 0, W, H);
+    drawImageCover(ctx, hero.img, 0, photoTop, W, photoH);
+    // soft top + bottom fade INTO the photo so it joins the bands without overlapping text
+    const topFade = ctx.createLinearGradient(0, photoTop, 0, photoTop + 80);
+    topFade.addColorStop(0, theme.ink);
+    topFade.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = topFade;
+    ctx.fillRect(0, photoTop, W, 80);
+    const botFade = ctx.createLinearGradient(0, photoBottom - 120, 0, photoBottom);
+    botFade.addColorStop(0, "rgba(0,0,0,0)");
+    botFade.addColorStop(1, theme.ink);
+    ctx.fillStyle = botFade;
+    ctx.fillRect(0, photoBottom - 120, W, 120);
   }
 
-  // Editorial darkening + gradient for legibility (NOT a hard panel)
-  const overlay = ctx.createLinearGradient(0, 0, 0, H);
-  overlay.addColorStop(0, "rgba(20, 14, 10, 0.55)");
-  overlay.addColorStop(0.45, "rgba(20, 14, 10, 0.25)");
-  overlay.addColorStop(1, "rgba(20, 14, 10, 0.88)");
-  ctx.fillStyle = overlay;
-  ctx.fillRect(0, 0, W, H);
+  /* ──── 3) Decorative motif (drawn over background, behind text) ──── */
+  drawMotif(ctx, theme, W, H);
 
-  // Soft side vignette for depth
-  const side = ctx.createLinearGradient(0, 0, W, 0);
-  side.addColorStop(0, "rgba(20, 14, 10, 0.35)");
-  side.addColorStop(0.5, "rgba(0,0,0,0)");
-  side.addColorStop(1, "rgba(20, 14, 10, 0.35)");
-  ctx.fillStyle = side;
-  ctx.fillRect(0, 0, W, H);
-
-  // Margin used for the hairline frame & content insets
-  const m = Math.round(Math.min(W, H) * 0.045);
-
-  // Hairline gold frame
-  ctx.strokeStyle = "rgba(201, 162, 75, 0.55)";
+  /* ──── 4) Hairline frame ──── */
+  const m = Math.round(Math.min(W, H) * 0.04);
+  ctx.strokeStyle = `${theme.accent}88`;
   ctx.lineWidth = 1.5;
   ctx.strokeRect(m, m, W - m * 2, H - m * 2);
 
-  /* ──────────── Top header (logo + eyebrow + restaurant name) ──────────── */
-  let headerTop = m + Math.round(H * 0.05);
+  /* ──── 5) Header band: logo + eyebrow + restaurant name ──── */
+  let cursorY = Math.round(headerH * 0.32);
 
-  // Restaurant logo (centered above the eyebrow) — drawn as a soft luminous mark.
   if (logo) {
-    const logoMaxH = Math.round(H * 0.075);
-    const logoMaxW = Math.round(W * 0.35);
+    const logoMaxH = Math.round(headerH * 0.42);
+    const logoMaxW = Math.round(W * 0.32);
     const ratio = logo.width / logo.height || 1;
     let lh = logoMaxH;
     let lw = lh * ratio;
@@ -281,129 +482,133 @@ function composeBanner({
       lh = lw / ratio;
     }
     const lx = (W - lw) / 2;
-    const ly = headerTop;
+    const ly = cursorY - lh / 2;
 
-    // Subtle cream backdrop pill so dark-on-dark logos still read.
-    const padX = Math.round(lw * 0.08) + 14;
-    const padY = Math.round(lh * 0.18) + 10;
-    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 12);
+    const padX = Math.round(lw * 0.08) + 12;
+    const padY = Math.round(lh * 0.18) + 8;
+    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 10);
     ctx.fillStyle = "rgba(245, 239, 228, 0.92)";
     ctx.fill();
-    ctx.strokeStyle = "rgba(201, 162, 75, 0.55)";
+    ctx.strokeStyle = `${theme.accent}88`;
     ctx.lineWidth = 1;
     ctx.stroke();
-
     ctx.drawImage(logo, lx, ly, lw, lh);
-
-    headerTop = ly + lh + Math.round(H * 0.035);
+    cursorY = ly + lh + Math.round(headerH * 0.18);
+  } else {
+    cursorY = Math.round(headerH * 0.45);
   }
 
-  // Eyebrow
-  ctx.fillStyle = PALETTE.goldSoft;
+  // Eyebrow (campaign type)
+  ctx.fillStyle = theme.accentSoft;
   ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
-  drawTrackedText(
-    ctx,
-    "CHEF'S SELECTION",
-    W / 2,
-    headerTop,
-    Math.round(H * 0.006),
-    "center",
-  );
+  drawTrackedText(ctx, theme.eyebrow, W / 2, cursorY, Math.round(H * 0.006), "center");
+  cursorY += Math.round(H * 0.012);
 
-  // Tiny gold rule under eyebrow
-  ctx.fillStyle = PALETTE.gold;
+  // Tiny rule
+  ctx.fillStyle = theme.accent;
   const ruleW = Math.round(W * 0.05);
-  ctx.fillRect(W / 2 - ruleW / 2, headerTop + Math.round(H * 0.012), ruleW, 2);
+  ctx.fillRect(W / 2 - ruleW / 2, cursorY, ruleW, 2);
+  cursorY += Math.round(H * 0.018);
 
-  // Restaurant name (italic serif — feels editorial / hospitality)
-  ctx.fillStyle = PALETTE.cream;
-  const nameSize = Math.round(H * 0.045);
+  // Restaurant name
+  ctx.fillStyle = theme.cream;
+  const nameSize = Math.round(H * 0.034);
   ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
-  ctx.fillText(nameLines[0], W / 2, headerTop + Math.round(H * 0.06));
+  ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
 
-  /* ──────────── Featured dish — large serif title ──────────── */
+  /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
+  if (hero?.item.price) {
+    ctx.font = `700 ${Math.round(H * 0.022)}px ${SANS}`;
+    const priceText = hero.item.price;
+    const tw = ctx.measureText(priceText).width;
+    const padX = 22;
+    const padY = 12;
+    const bw = tw + padX * 2;
+    const bh = Math.round(H * 0.022) + padY * 2;
+    const bx = W - m - bw - 10;
+    const by = photoTop + 14;
+    roundRect(ctx, bx, by, bw, bh, bh / 2);
+    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fill();
+    ctx.strokeStyle = theme.accent;
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    ctx.fillStyle = theme.accentSoft;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(priceText, bx + bw / 2, by + bh / 2 + 1);
+    ctx.textBaseline = "alphabetic";
+  }
+
+  /* ──── 7) Content band BELOW photo: tagline + dish name + description + companions ──── */
+  const padX = m + Math.round(W * 0.02);
+  const innerW = W - padX * 2;
+  let y = contentTop + Math.round(contentH * 0.1);
+
+  // Tagline (small, italic serif, accent color)
+  ctx.fillStyle = theme.accent;
+  const tagSize = Math.round(H * 0.018);
+  ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
+  ctx.textAlign = "center";
+  ctx.fillText(theme.tagline, W / 2, y);
+  y += Math.round(H * 0.025);
+
   if (hero) {
-    const titleY = Math.round(H * 0.5);
-    ctx.fillStyle = PALETTE.cream;
+    // Dish title
     const titleSize =
       format.key === "story"
-        ? Math.round(H * 0.06)
+        ? Math.round(H * 0.05)
         : format.key === "landscape"
-          ? Math.round(H * 0.085)
-          : Math.round(H * 0.075);
+          ? Math.round(H * 0.07)
+          : Math.round(H * 0.062);
+    ctx.fillStyle = theme.cream;
     ctx.font = `700 ${titleSize}px ${SERIF}`;
     ctx.textAlign = "center";
-    const titleLines = wrapText(
-      ctx,
-      hero.item.name,
-      W - m * 3,
-      format.key === "landscape" ? 1 : 2,
-    );
-
-    // Subtle text shadow for legibility over photography
-    ctx.shadowColor = "rgba(0,0,0,0.45)";
-    ctx.shadowBlur = 18;
-    ctx.shadowOffsetY = 2;
+    const titleMaxLines = format.key === "landscape" ? 1 : 2;
+    const titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
     titleLines.forEach((line, i) => {
-      ctx.fillText(line, W / 2, titleY + i * titleSize * 1.05);
+      ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
-    ctx.shadowBlur = 0;
-    ctx.shadowOffsetY = 0;
+    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
 
-    // Description (small, italic, muted) — only if short enough
+    // Description
     if (hero.item.description) {
-      ctx.fillStyle = PALETTE.mute;
-      const descSize = Math.round(H * 0.022);
+      const descSize = Math.round(H * 0.02);
+      ctx.fillStyle = theme.mute;
       ctx.font = `italic 400 ${descSize}px ${SERIF}`;
-      const descLines = wrapText(
-        ctx,
-        hero.item.description,
-        W - m * 4,
-        2,
-      );
-      const descTop = titleY + titleLines.length * titleSize * 1.05 + Math.round(H * 0.03);
+      const descLines = wrapText(ctx, hero.item.description, innerW - 60, format.key === "landscape" ? 1 : 2);
       descLines.forEach((line, i) => {
-        ctx.fillText(line, W / 2, descTop + i * descSize * 1.4);
+        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.3);
       });
+      y += measureWrappedHeight(descLines.length, descSize, 1.3) + Math.round(H * 0.02);
     }
   }
 
-  /* ──────────── Lower panel: companion dishes & price list ──────────── */
+  /* ──── 8) Companion dishes (chips with dividers) ──── */
   const companions = dishes.slice(1);
-  const panelTop =
-    format.key === "story"
-      ? Math.round(H * 0.7)
-      : format.key === "landscape"
-        ? Math.round(H * 0.7)
-        : Math.round(H * 0.72);
+  const footerReserve = Math.round(H * 0.075); // reserve space for footer
+  const companionsTop = y + Math.round(H * 0.015);
+  const companionsAvailable = H - m - footerReserve - companionsTop;
 
-  if (companions.length > 0) {
-    // Small "ALSO FEATURING" eyebrow centered
-    ctx.fillStyle = PALETTE.goldSoft;
-    ctx.font = `600 ${Math.round(H * 0.014)}px ${SANS}`;
-    drawTrackedText(
-      ctx,
-      "ALSO FEATURING",
-      W / 2,
-      panelTop,
-      Math.round(H * 0.005),
-      "center",
-    );
+  if (companions.length > 0 && companionsAvailable > Math.round(H * 0.08)) {
+    // "ALSO FEATURING" eyebrow
+    ctx.fillStyle = theme.accentSoft;
+    ctx.font = `600 ${Math.round(H * 0.013)}px ${SANS}`;
+    drawTrackedText(ctx, "ALSO FEATURING", W / 2, companionsTop, Math.round(H * 0.005), "center");
 
-    // Dish chips — laid out horizontally, no hard panels, just typographic rhythm
-    const chipsTop = panelTop + Math.round(H * 0.03);
+    const chipsTop = companionsTop + Math.round(H * 0.025);
     const visible = companions.slice(0, format.key === "story" ? 4 : 3);
-    const colW = (W - m * 2) / visible.length;
+    const colW = innerW / visible.length;
 
     visible.forEach((d, i) => {
-      const cx = m + colW * (i + 0.5);
+      const cx = padX + colW * (i + 0.5);
 
-      // Dish name (serif, smaller)
-      ctx.fillStyle = PALETTE.cream;
-      const dishSize = Math.round(H * 0.022);
+      // Dish name
+      ctx.fillStyle = theme.cream;
+      const dishSize = Math.round(H * 0.02);
       ctx.font = `500 ${dishSize}px ${SERIF}`;
       ctx.textAlign = "center";
       const dishLines = wrapText(ctx, d.item.name, colW - 30, 2);
@@ -411,78 +616,61 @@ function composeBanner({
         ctx.fillText(line, cx, chipsTop + (li + 1) * dishSize * 1.2);
       });
 
-      // Price under it (sans, gold, small)
       if (d.item.price) {
-        ctx.fillStyle = PALETTE.gold;
-        const pSize = Math.round(H * 0.018);
+        ctx.fillStyle = theme.accent;
+        const pSize = Math.round(H * 0.017);
         ctx.font = `600 ${pSize}px ${SANS}`;
         const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.012);
         ctx.fillText(d.item.price, cx, priceY);
       }
 
-      // Vertical divider between chips
       if (i < visible.length - 1) {
-        ctx.strokeStyle = "rgba(201, 162, 75, 0.35)";
+        ctx.strokeStyle = `${theme.accent}55`;
         ctx.lineWidth = 1;
-        const dx = m + colW * (i + 1);
+        const dx = padX + colW * (i + 1);
         ctx.beginPath();
         ctx.moveTo(dx, chipsTop + 8);
-        ctx.lineTo(dx, chipsTop + Math.round(H * 0.085));
+        ctx.lineTo(dx, chipsTop + Math.round(H * 0.075));
         ctx.stroke();
       }
     });
   }
 
-  /* ──────────── Hero price badge (top right, elegant) ──────────── */
-  if (hero?.item.price) {
-    const padX = 22;
-    const padY = 12;
-    ctx.font = `700 ${Math.round(H * 0.022)}px ${SANS}`;
-    const priceText = hero.item.price;
-    const tw = ctx.measureText(priceText).width;
-    const bw = tw + padX * 2;
-    const bh = Math.round(H * 0.022) + padY * 2;
-    const bx = W - m - bw - 6;
-    const by = m + 6;
+  /* ──── 9) Footer: badge + URL ──── */
+  const footY = H - m - Math.round(H * 0.022);
 
-    // gold pill with thin stroke
+  if (theme.footerBadge) {
+    ctx.font = `700 ${Math.round(H * 0.014)}px ${SANS}`;
+    const tw = ctx.measureText(theme.footerBadge).width;
+    const bpadX = 14;
+    const bpadY = 6;
+    const bw = tw + bpadX * 2;
+    const bh = Math.round(H * 0.014) + bpadY * 2;
+    const bx = (W - bw) / 2;
+    const by = footY - Math.round(H * 0.05) - bh;
     roundRect(ctx, bx, by, bw, bh, bh / 2);
-    ctx.fillStyle = "rgba(20, 14, 10, 0.55)";
+    ctx.fillStyle = theme.accent;
     ctx.fill();
-    ctx.strokeStyle = PALETTE.gold;
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    ctx.fillStyle = PALETTE.goldSoft;
+    ctx.fillStyle = theme.ink;
     ctx.textAlign = "center";
     ctx.textBaseline = "middle";
-    ctx.fillText(priceText, bx + bw / 2, by + bh / 2 + 1);
+    drawTrackedText(ctx, theme.footerBadge, bx + bw / 2, by + bh / 2 + 1, 1, "center");
     ctx.textBaseline = "alphabetic";
   }
 
-  /* ──────────── Footer: website URL + tiny gold rule ──────────── */
-  const footY = H - m - Math.round(H * 0.025);
-  ctx.fillStyle = PALETTE.gold;
+  // Tiny rule above URL
+  ctx.fillStyle = theme.accent;
   const fRuleW = Math.round(W * 0.04);
-  ctx.fillRect(W / 2 - fRuleW / 2, footY - Math.round(H * 0.025), fRuleW, 1);
+  ctx.fillRect(W / 2 - fRuleW / 2, footY - Math.round(H * 0.022), fRuleW, 1);
 
-  ctx.fillStyle = PALETTE.mute;
-  ctx.font = `500 ${Math.round(H * 0.016)}px ${SANS}`;
-  drawTrackedText(
-    ctx,
-    cleanUrl.toUpperCase(),
-    W / 2,
-    footY,
-    Math.round(H * 0.004),
-    "center",
-  );
+  ctx.fillStyle = theme.mute;
+  ctx.font = `500 ${Math.round(H * 0.014)}px ${SANS}`;
+  drawTrackedText(ctx, cleanUrl.toUpperCase(), W / 2, footY, Math.round(H * 0.004), "center");
 
   return canvas;
 }
 
-/* ────────────────────────────────────────────────────────────────
-   Component
-   ──────────────────────────────────────────────────────────────── */
+/* ────────────── Component ────────────── */
 
 interface BannerState {
   url: string | null;
@@ -493,7 +681,14 @@ interface BannerState {
 const slugify = (s: string) =>
   s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 40) || "banner";
 
-export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBack }: BannerStudioProps) => {
+export const BannerStudio = ({
+  items,
+  restaurantName,
+  websiteUrl,
+  logoUrl,
+  campaign,
+  onBack,
+}: BannerStudioProps) => {
   const { toast } = useToast();
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
     square: { url: null, loading: true, error: null },
@@ -505,6 +700,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
 
   const safeName = useMemo(() => restaurantName || "Your Restaurant", [restaurantName]);
   const cappedItems = useMemo(() => items.slice(0, 5), [items]);
+  const theme = useMemo(() => resolveCampaignTheme(campaign), [campaign]);
 
   useEffect(() => {
     cancelRef.current = false;
@@ -518,7 +714,6 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
       try {
         await ensureFontsLoaded();
 
-        // Load the restaurant logo (CORS-safe via weserv proxy). Optional — null on failure.
         let logo: HTMLImageElement | null = null;
         if (logoUrl) {
           const stripped = logoUrl.replace(/^https?:\/\//, "");
@@ -527,7 +722,6 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
             logo = await loadImage(proxied);
           } catch {
             try {
-              // Direct fallback (works when the host sends permissive CORS, e.g. many CDNs)
               logo = await loadImage(logoUrl);
             } catch {
               logo = null;
@@ -538,7 +732,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
 
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
-            const url = pollinationsUrl(item, 1280, 1280);
+            const url = pollinationsUrl(item, 1280, 1280, theme, generationKey);
             try {
               const img = await loadImage(url);
               return { item, img };
@@ -561,6 +755,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
               websiteUrl,
               dishes: dishImages,
               logo,
+              theme,
             });
             const url = canvas.toDataURL("image/png");
             setBanners((prev) => ({
@@ -592,14 +787,14 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, toast]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
     if (!banner.url) return;
     const a = document.createElement("a");
     a.href = banner.url;
-    a.download = `${slugify(safeName)}-${key}.png`;
+    a.download = `${slugify(safeName)}-${campaign.type}-${key}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
@@ -618,7 +813,7 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
       <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
         <Button onClick={onBack} variant="outline" size="sm" className="gap-2">
           <ArrowLeft className="h-4 w-4" />
-          Back to menu
+          Change campaign
         </Button>
         <div className="flex flex-wrap gap-2">
           <Button
@@ -639,13 +834,13 @@ export const BannerStudio = ({ items, restaurantName, websiteUrl, logoUrl, onBac
 
       <header className="mb-6 flex flex-col gap-2 border-b border-border pb-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-primary">
-          Banner studio
+          {theme.eyebrow.toLowerCase()} · banner studio
         </p>
         <h2 className="text-3xl font-bold tracking-tight text-foreground sm:text-4xl">
           {safeName}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 editorial-grade formats · dish photography by{" "}
+          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 themed formats · dish photography by{" "}
           <a
             href="https://pollinations.ai"
             target="_blank"

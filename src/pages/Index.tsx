@@ -6,11 +6,13 @@ import { UrlInputForm } from "@/components/UrlInputForm";
 import { ScrapingProgress } from "@/components/ScrapingProgress";
 import { MenuList } from "@/components/MenuList";
 import { BannerStudio } from "@/components/BannerStudio";
+import { CampaignSelector } from "@/components/CampaignSelector";
 import { MenuItem, ScrapeResponse } from "@/types/menu";
+import { CampaignChoice } from "@/types/campaign";
 import { Button } from "@/components/ui/button";
 
 type Status = "idle" | "loading" | "success" | "error";
-type Stage = "menu" | "banner";
+type Stage = "menu" | "campaign" | "banner";
 
 const Index = () => {
   const { toast } = useToast();
@@ -22,6 +24,7 @@ const Index = () => {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [stage, setStage] = useState<Stage>("menu");
+  const [campaign, setCampaign] = useState<CampaignChoice | null>(null);
 
   const handleScrape = async (url: string) => {
     setStatus("loading");
@@ -32,6 +35,7 @@ const Index = () => {
     setSubmittedUrl(url);
     setSelectedIds(new Set());
     setStage("menu");
+    setCampaign(null);
 
     try {
       const { data, error } = await supabase.functions.invoke<ScrapeResponse>(
@@ -80,6 +84,7 @@ const Index = () => {
     setLogoUrl(null);
     setSelectedIds(new Set());
     setStage("menu");
+    setCampaign(null);
   };
 
   const toggleSelect = (id: string) => {
@@ -105,14 +110,19 @@ const Index = () => {
     [items, selectedIds],
   );
 
-  const goToBanner = () => {
+  const goToCampaign = () => {
     if (selectedItems.length === 0) {
       toast({
         title: "Pick at least one dish",
-        description: "Tap dishes to select them, then generate banners.",
+        description: "Tap dishes to select them, then choose a campaign.",
       });
       return;
     }
+    setStage("campaign");
+  };
+
+  const handleCampaignConfirm = (choice: CampaignChoice) => {
+    setCampaign(choice);
     setStage("banner");
   };
 
@@ -133,7 +143,11 @@ const Index = () => {
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex">
             <Sparkles className="h-3.5 w-3.5 text-accent" />
-            {stage === "banner" ? "Phase 2 · Banner studio" : "Phase 1 · Menu extraction"}
+            {stage === "banner"
+              ? "Step 3 · Banner studio"
+              : stage === "campaign"
+                ? "Step 2 · Campaign"
+                : "Step 1 · Menu"}
           </div>
         </div>
       </header>
@@ -220,13 +234,22 @@ const Index = () => {
           </div>
         )}
 
-        {status === "success" && stage === "banner" && (
+        {status === "success" && stage === "campaign" && (
+          <CampaignSelector
+            selectedCount={selectedItems.length}
+            onBack={() => setStage("menu")}
+            onConfirm={handleCampaignConfirm}
+          />
+        )}
+
+        {status === "success" && stage === "banner" && campaign && (
           <BannerStudio
             items={selectedItems}
             restaurantName={restaurantName}
             websiteUrl={submittedUrl}
             logoUrl={logoUrl}
-            onBack={() => setStage("menu")}
+            campaign={campaign}
+            onBack={() => setStage("campaign")}
           />
         )}
       </main>
@@ -249,9 +272,9 @@ const Index = () => {
               Clear
             </button>
           </div>
-          <Button onClick={goToBanner} className="gap-2">
+          <Button onClick={goToCampaign} className="gap-2">
             <Wand2 className="h-4 w-4" />
-            Generate banners
+            Choose campaign
           </Button>
         </div>
       )}
