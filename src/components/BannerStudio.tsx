@@ -510,18 +510,19 @@ function composeBanner({
   }
 
   // Eyebrow (campaign type)
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.7)";
+  ctx.shadowBlur = 8;
   ctx.fillStyle = theme.accentSoft;
   ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
   drawTrackedText(ctx, theme.eyebrow, W / 2, cursorY, Math.round(H * 0.006), "center");
-  cursorY += Math.round(H * 0.012);
-
-  // Tiny rule
-  ctx.fillStyle = theme.accent;
-  const ruleW = Math.round(W * 0.05);
-  ctx.fillRect(W / 2 - ruleW / 2, cursorY, ruleW, 2);
-  cursorY += Math.round(H * 0.018);
+  ctx.restore();
+  cursorY += Math.round(H * 0.026);
 
   // Restaurant name
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.75)";
+  ctx.shadowBlur = 10;
   ctx.fillStyle = theme.cream;
   const nameSize = Math.round(H * 0.034);
   ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
@@ -529,6 +530,7 @@ function composeBanner({
   ctx.textBaseline = "alphabetic";
   const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
   ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
+  ctx.restore();
 
   /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
   if (hero?.item.price) {
