@@ -143,7 +143,11 @@ const Index = () => {
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex">
             <Sparkles className="h-3.5 w-3.5 text-accent" />
-            {stage === "banner" ? "Phase 2 · Banner studio" : "Phase 1 · Menu extraction"}
+            {stage === "banner"
+              ? "Step 3 · Banner studio"
+              : stage === "campaign"
+                ? "Step 2 · Campaign"
+                : "Step 1 · Menu"}
           </div>
         </div>
       </header>
@@ -230,13 +234,22 @@ const Index = () => {
           </div>
         )}
 
-        {status === "success" && stage === "banner" && (
+        {status === "success" && stage === "campaign" && (
+          <CampaignSelector
+            selectedCount={selectedItems.length}
+            onBack={() => setStage("menu")}
+            onConfirm={handleCampaignConfirm}
+          />
+        )}
+
+        {status === "success" && stage === "banner" && campaign && (
           <BannerStudio
             items={selectedItems}
             restaurantName={restaurantName}
             websiteUrl={submittedUrl}
             logoUrl={logoUrl}
-            onBack={() => setStage("menu")}
+            campaign={campaign}
+            onBack={() => setStage("campaign")}
           />
         )}
       </main>
@@ -259,9 +272,9 @@ const Index = () => {
               Clear
             </button>
           </div>
-          <Button onClick={goToBanner} className="gap-2">
+          <Button onClick={goToCampaign} className="gap-2">
             <Wand2 className="h-4 w-4" />
-            Generate banners
+            Choose campaign
           </Button>
         </div>
       )}
