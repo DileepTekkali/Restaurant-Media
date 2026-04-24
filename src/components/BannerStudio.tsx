@@ -851,6 +851,30 @@ export const BannerStudio = ({
         );
         if (cancelRef.current) return;
 
+        // Ask Groq for a polished, professional one-liner for the hero dish.
+        let heroCopy: string | null = null;
+        const heroItem = cappedItems[0];
+        if (heroItem) {
+          try {
+            const { data } = await supabase.functions.invoke<{ tagline?: string; error?: string }>(
+              "dish-copy",
+              {
+                body: {
+                  dishName: heroItem.name,
+                  dishDescription: heroItem.description,
+                  campaignType: campaign.type,
+                  festival: campaign.festival ?? null,
+                  restaurantName: safeName,
+                },
+              },
+            );
+            if (data?.tagline) heroCopy = data.tagline;
+          } catch {
+            heroCopy = null; // graceful fallback to scraped description
+          }
+        }
+        if (cancelRef.current) return;
+
         for (const format of FORMATS) {
           if (cancelRef.current) return;
           try {
@@ -861,6 +885,8 @@ export const BannerStudio = ({
               dishes: dishImages,
               logo,
               theme,
+              heroCopy,
+              currency,
             });
             const url = canvas.toDataURL("image/png");
             setBanners((prev) => ({
