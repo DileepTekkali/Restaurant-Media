@@ -717,11 +717,15 @@ function composeBanner({
       });
 
       if (d.item.price) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.55)";
+        ctx.shadowBlur = 6;
         ctx.fillStyle = theme.accent;
-        const pSize = Math.round(H * 0.017);
-        ctx.font = `600 ${pSize}px ${SANS}`;
-        const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.012);
-        ctx.fillText(d.item.price, cx, priceY);
+        const pSize = Math.round(H * 0.018);
+        ctx.font = `700 ${pSize}px ${SANS}`;
+        const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.014);
+        ctx.fillText(formatPriceWithCurrency(d.item.price, currency), cx, priceY);
+        ctx.restore();
       }
 
       if (i < visible.length - 1) {
