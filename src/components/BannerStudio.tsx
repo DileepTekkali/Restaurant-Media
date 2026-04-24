@@ -3,6 +3,7 @@ import { Loader2, Download, RefreshCw, ArrowLeft, ImageIcon } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import { MenuItem } from "@/types/menu";
 import {
   CampaignChoice,
@@ -104,6 +105,59 @@ function loadImage(src: string): Promise<HTMLImageElement> {
     img.onerror = () => reject(new Error(`Failed to load ${src}`));
     img.src = src;
   });
+}
+
+/* ────────────── Currency helpers ────────────── */
+
+const CURRENCY_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(?:INR|Rs\.?|rupees?)\b/i, "₹"],
+  [/\b(?:USD|US\$)\b/i, "$"],
+  [/\b(?:EUR|euros?)\b/i, "€"],
+  [/\b(?:GBP|pounds?|sterling)\b/i, "£"],
+  [/\b(?:JPY|yen)\b/i, "¥"],
+  [/\b(?:AED|dirhams?)\b/i, "د.إ"],
+  [/\b(?:SAR|riyals?)\b/i, "﷼"],
+];
+
+const CURRENCY_SYMBOLS = ["₹", "$", "€", "£", "¥", "د.إ", "﷼", "₩", "₽", "₺", "฿"];
+
+function detectCurrencyFromPrice(price: string): string | null {
+  for (const sym of CURRENCY_SYMBOLS) {
+    if (price.includes(sym)) return sym;
+  }
+  for (const [re, sym] of CURRENCY_PATTERNS) {
+    if (re.test(price)) return sym;
+  }
+  return null;
+}
+
+/** Pick the most common currency symbol across a menu's prices. */
+function detectMenuCurrency(items: MenuItem[]): string {
+  const counts = new Map<string, number>();
+  for (const it of items) {
+    if (!it.price) continue;
+    const sym = detectCurrencyFromPrice(it.price);
+    if (sym) counts.set(sym, (counts.get(sym) ?? 0) + 1);
+  }
+  let best: string | null = null;
+  let bestN = 0;
+  counts.forEach((n, sym) => {
+    if (n > bestN) {
+      best = sym;
+      bestN = n;
+    }
+  });
+  return best ?? "$"; // safe default
+}
+
+/** Ensure the displayed price string carries an explicit currency symbol. */
+function formatPriceWithCurrency(price: string, fallbackSymbol: string): string {
+  const trimmed = price.trim();
+  if (!trimmed) return trimmed;
+  if (detectCurrencyFromPrice(trimmed)) return trimmed;
+  // Normalize "Rs 250" / "INR 250" style to symbol + number, otherwise prepend.
+  const numeric = trimmed.replace(/^(?:Rs\.?|INR|USD|EUR|GBP|US\$)\s*/i, "");
+  return `${fallbackSymbol}${numeric}`;
 }
 
 /* ────────────── Canvas helpers ────────────── */
@@ -410,6 +464,10 @@ interface ComposeArgs {
   dishes: { item: MenuItem; img: HTMLImageElement }[];
   logo: HTMLImageElement | null;
   theme: CampaignTheme;
+  /** AI-generated hero dish marketing copy (overrides scraped description). */
+  heroCopy?: string | null;
+  /** Currency symbol inferred from the menu (e.g. "₹", "$", "€"). */
+  currency: string;
 }
 
 function composeBanner({
@@ -419,6 +477,8 @@ function composeBanner({
   dishes,
   logo,
   theme,
+  heroCopy,
+  currency,
 }: ComposeArgs): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = format.width;
@@ -472,8 +532,8 @@ function composeBanner({
   let cursorY = Math.round(headerH * 0.32);
 
   if (logo) {
-    const logoMaxH = Math.round(headerH * 0.42);
-    const logoMaxW = Math.round(W * 0.32);
+    const logoMaxH = Math.round(headerH * 0.46);
+    const logoMaxW = Math.round(W * 0.34);
     const ratio = logo.width / logo.height || 1;
     let lh = logoMaxH;
     let lw = lh * ratio;
@@ -484,33 +544,45 @@ function composeBanner({
     const lx = (W - lw) / 2;
     const ly = cursorY - lh / 2;
 
-    const padX = Math.round(lw * 0.08) + 12;
-    const padY = Math.round(lh * 0.18) + 8;
-    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 10);
-    ctx.fillStyle = "rgba(245, 239, 228, 0.92)";
+    // Glow halo behind logo for visibility on dark backgrounds (no rectangle).
+    const cx = lx + lw / 2;
+    const cy = ly + lh / 2;
+    const haloR = Math.max(lw, lh) * 0.75;
+    const halo = ctx.createRadialGradient(cx, cy, lh * 0.2, cx, cy, haloR);
+    halo.addColorStop(0, `${theme.accentSoft}55`);
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = `${theme.accent}88`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+
+    // Drop shadow so the logo reads on any background.
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.85)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2;
     ctx.drawImage(logo, lx, ly, lw, lh);
+    ctx.restore();
     cursorY = ly + lh + Math.round(headerH * 0.18);
   } else {
     cursorY = Math.round(headerH * 0.45);
   }
 
   // Eyebrow (campaign type)
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.7)";
+  ctx.shadowBlur = 8;
   ctx.fillStyle = theme.accentSoft;
   ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
   drawTrackedText(ctx, theme.eyebrow, W / 2, cursorY, Math.round(H * 0.006), "center");
-  cursorY += Math.round(H * 0.012);
-
-  // Tiny rule
-  ctx.fillStyle = theme.accent;
-  const ruleW = Math.round(W * 0.05);
-  ctx.fillRect(W / 2 - ruleW / 2, cursorY, ruleW, 2);
-  cursorY += Math.round(H * 0.018);
+  ctx.restore();
+  cursorY += Math.round(H * 0.026);
 
   // Restaurant name
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.75)";
+  ctx.shadowBlur = 10;
   ctx.fillStyle = theme.cream;
   const nameSize = Math.round(H * 0.034);
   ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
@@ -518,23 +590,30 @@ function composeBanner({
   ctx.textBaseline = "alphabetic";
   const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
   ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
+  ctx.restore();
 
   /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
   if (hero?.item.price) {
-    ctx.font = `700 ${Math.round(H * 0.022)}px ${SANS}`;
-    const priceText = hero.item.price;
+    ctx.font = `700 ${Math.round(H * 0.024)}px ${SANS}`;
+    const priceText = formatPriceWithCurrency(hero.item.price, currency);
     const tw = ctx.measureText(priceText).width;
-    const padX = 22;
-    const padY = 12;
+    const padX = 24;
+    const padY = 14;
     const bw = tw + padX * 2;
-    const bh = Math.round(H * 0.022) + padY * 2;
+    const bh = Math.round(H * 0.024) + padY * 2;
     const bx = W - m - bw - 10;
     const by = photoTop + 14;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
     roundRect(ctx, bx, by, bw, bh, bh / 2);
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.78)";
     ctx.fill();
+    ctx.restore();
     ctx.strokeStyle = theme.accent;
     ctx.lineWidth = 1.5;
+    roundRect(ctx, bx, by, bw, bh, bh / 2);
     ctx.stroke();
     ctx.fillStyle = theme.accentSoft;
     ctx.textAlign = "center";
@@ -549,21 +628,28 @@ function composeBanner({
   let y = contentTop + Math.round(contentH * 0.1);
 
   // Tagline (small, italic serif, accent color)
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 6;
   ctx.fillStyle = theme.accent;
-  const tagSize = Math.round(H * 0.018);
+  const tagSize = Math.round(H * 0.019);
   ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
   ctx.textAlign = "center";
   ctx.fillText(theme.tagline, W / 2, y);
-  y += Math.round(H * 0.025);
+  ctx.restore();
+  y += Math.round(H * 0.028);
 
   if (hero) {
     // Dish title
     const titleSize =
       format.key === "story"
-        ? Math.round(H * 0.05)
+        ? Math.round(H * 0.052)
         : format.key === "landscape"
-          ? Math.round(H * 0.07)
-          : Math.round(H * 0.062);
+          ? Math.round(H * 0.072)
+          : Math.round(H * 0.064);
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = 12;
     ctx.fillStyle = theme.cream;
     ctx.font = `700 ${titleSize}px ${SERIF}`;
     ctx.textAlign = "center";
@@ -572,18 +658,33 @@ function composeBanner({
     titleLines.forEach((line, i) => {
       ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
-    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
+    ctx.restore();
+    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.018);
 
-    // Description
-    if (hero.item.description) {
-      const descSize = Math.round(H * 0.02);
-      ctx.fillStyle = theme.mute;
-      ctx.font = `italic 400 ${descSize}px ${SERIF}`;
-      const descLines = wrapText(ctx, hero.item.description, innerW - 60, format.key === "landscape" ? 1 : 2);
+    // AI-crafted marketing copy (Groq) takes priority, falls back to scraped description.
+    const copyText =
+      (heroCopy && heroCopy.trim()) ||
+      (hero.item.description && hero.item.description.trim()) ||
+      "";
+    if (copyText) {
+      const descSize = Math.round(H * 0.022);
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = theme.cream;
+      ctx.globalAlpha = 0.92;
+      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+      const descLines = wrapText(
+        ctx,
+        copyText,
+        innerW - 60,
+        format.key === "landscape" ? 2 : 3,
+      );
       descLines.forEach((line, i) => {
-        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.3);
+        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.35);
       });
-      y += measureWrappedHeight(descLines.length, descSize, 1.3) + Math.round(H * 0.02);
+      ctx.restore();
+      y += measureWrappedHeight(descLines.length, descSize, 1.35) + Math.round(H * 0.02);
     }
   }
 
@@ -617,11 +718,15 @@ function composeBanner({
       });
 
       if (d.item.price) {
+        ctx.save();
+        ctx.shadowColor = "rgba(0,0,0,0.55)";
+        ctx.shadowBlur = 6;
         ctx.fillStyle = theme.accent;
-        const pSize = Math.round(H * 0.017);
-        ctx.font = `600 ${pSize}px ${SANS}`;
-        const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.012);
-        ctx.fillText(d.item.price, cx, priceY);
+        const pSize = Math.round(H * 0.018);
+        ctx.font = `700 ${pSize}px ${SANS}`;
+        const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.014);
+        ctx.fillText(formatPriceWithCurrency(d.item.price, currency), cx, priceY);
+        ctx.restore();
       }
 
       if (i < visible.length - 1) {
@@ -701,6 +806,7 @@ export const BannerStudio = ({
   const safeName = useMemo(() => restaurantName || "Your Restaurant", [restaurantName]);
   const cappedItems = useMemo(() => items.slice(0, 5), [items]);
   const theme = useMemo(() => resolveCampaignTheme(campaign), [campaign]);
+  const currency = useMemo(() => detectMenuCurrency(items), [items]);
 
   useEffect(() => {
     cancelRef.current = false;
@@ -746,6 +852,30 @@ export const BannerStudio = ({
         );
         if (cancelRef.current) return;
 
+        // Ask Groq for a polished, professional one-liner for the hero dish.
+        let heroCopy: string | null = null;
+        const heroItem = cappedItems[0];
+        if (heroItem) {
+          try {
+            const { data } = await supabase.functions.invoke<{ tagline?: string; error?: string }>(
+              "dish-copy",
+              {
+                body: {
+                  dishName: heroItem.name,
+                  dishDescription: heroItem.description,
+                  campaignType: campaign.type,
+                  festival: campaign.festival ?? null,
+                  restaurantName: safeName,
+                },
+              },
+            );
+            if (data?.tagline) heroCopy = data.tagline;
+          } catch {
+            heroCopy = null; // graceful fallback to scraped description
+          }
+        }
+        if (cancelRef.current) return;
+
         for (const format of FORMATS) {
           if (cancelRef.current) return;
           try {
@@ -756,6 +886,8 @@ export const BannerStudio = ({
               dishes: dishImages,
               logo,
               theme,
+              heroCopy,
+              currency,
             });
             const url = canvas.toDataURL("image/png");
             setBanners((prev) => ({
@@ -787,7 +919,7 @@ export const BannerStudio = ({
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
