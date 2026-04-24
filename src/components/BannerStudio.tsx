@@ -3,6 +3,7 @@ import { Loader2, Download, RefreshCw, ArrowLeft, ImageIcon } from "lucide-react
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { supabase } from "@/integrations/supabase/client";
 import { MenuItem } from "@/types/menu";
 import {
   CampaignChoice,
