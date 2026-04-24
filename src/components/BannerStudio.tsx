@@ -919,7 +919,7 @@ export const BannerStudio = ({
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
