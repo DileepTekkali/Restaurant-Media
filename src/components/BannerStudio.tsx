@@ -472,8 +472,8 @@ function composeBanner({
   let cursorY = Math.round(headerH * 0.32);
 
   if (logo) {
-    const logoMaxH = Math.round(headerH * 0.42);
-    const logoMaxW = Math.round(W * 0.32);
+    const logoMaxH = Math.round(headerH * 0.46);
+    const logoMaxW = Math.round(W * 0.34);
     const ratio = logo.width / logo.height || 1;
     let lh = logoMaxH;
     let lw = lh * ratio;
@@ -484,15 +484,26 @@ function composeBanner({
     const lx = (W - lw) / 2;
     const ly = cursorY - lh / 2;
 
-    const padX = Math.round(lw * 0.08) + 12;
-    const padY = Math.round(lh * 0.18) + 8;
-    roundRect(ctx, lx - padX, ly - padY, lw + padX * 2, lh + padY * 2, 10);
-    ctx.fillStyle = "rgba(245, 239, 228, 0.92)";
+    // Glow halo behind logo for visibility on dark backgrounds (no rectangle).
+    const cx = lx + lw / 2;
+    const cy = ly + lh / 2;
+    const haloR = Math.max(lw, lh) * 0.75;
+    const halo = ctx.createRadialGradient(cx, cy, lh * 0.2, cx, cy, haloR);
+    halo.addColorStop(0, `${theme.accentSoft}55`);
+    halo.addColorStop(1, "rgba(0,0,0,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath();
+    ctx.arc(cx, cy, haloR, 0, Math.PI * 2);
     ctx.fill();
-    ctx.strokeStyle = `${theme.accent}88`;
-    ctx.lineWidth = 1;
-    ctx.stroke();
+
+    // Drop shadow so the logo reads on any background.
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.85)";
+    ctx.shadowBlur = 18;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 2;
     ctx.drawImage(logo, lx, ly, lw, lh);
+    ctx.restore();
     cursorY = ly + lh + Math.round(headerH * 0.18);
   } else {
     cursorY = Math.round(headerH * 0.45);
