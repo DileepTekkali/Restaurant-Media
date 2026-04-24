@@ -410,6 +410,10 @@ interface ComposeArgs {
   dishes: { item: MenuItem; img: HTMLImageElement }[];
   logo: HTMLImageElement | null;
   theme: CampaignTheme;
+  /** AI-generated hero dish marketing copy (overrides scraped description). */
+  heroCopy?: string | null;
+  /** Currency symbol inferred from the menu (e.g. "₹", "$", "€"). */
+  currency: string;
 }
 
 function composeBanner({
@@ -419,6 +423,8 @@ function composeBanner({
   dishes,
   logo,
   theme,
+  heroCopy,
+  currency,
 }: ComposeArgs): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = format.width;
