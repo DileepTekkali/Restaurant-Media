@@ -593,20 +593,26 @@ function composeBanner({
 
   /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
   if (hero?.item.price) {
-    ctx.font = `700 ${Math.round(H * 0.022)}px ${SANS}`;
-    const priceText = hero.item.price;
+    ctx.font = `700 ${Math.round(H * 0.024)}px ${SANS}`;
+    const priceText = formatPriceWithCurrency(hero.item.price, currency);
     const tw = ctx.measureText(priceText).width;
-    const padX = 22;
-    const padY = 12;
+    const padX = 24;
+    const padY = 14;
     const bw = tw + padX * 2;
-    const bh = Math.round(H * 0.022) + padY * 2;
+    const bh = Math.round(H * 0.024) + padY * 2;
     const bx = W - m - bw - 10;
     const by = photoTop + 14;
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.55)";
+    ctx.shadowBlur = 14;
+    ctx.shadowOffsetY = 3;
     roundRect(ctx, bx, by, bw, bh, bh / 2);
-    ctx.fillStyle = "rgba(0,0,0,0.55)";
+    ctx.fillStyle = "rgba(0,0,0,0.78)";
     ctx.fill();
+    ctx.restore();
     ctx.strokeStyle = theme.accent;
     ctx.lineWidth = 1.5;
+    roundRect(ctx, bx, by, bw, bh, bh / 2);
     ctx.stroke();
     ctx.fillStyle = theme.accentSoft;
     ctx.textAlign = "center";
@@ -621,21 +627,28 @@ function composeBanner({
   let y = contentTop + Math.round(contentH * 0.1);
 
   // Tagline (small, italic serif, accent color)
+  ctx.save();
+  ctx.shadowColor = "rgba(0,0,0,0.6)";
+  ctx.shadowBlur = 6;
   ctx.fillStyle = theme.accent;
-  const tagSize = Math.round(H * 0.018);
+  const tagSize = Math.round(H * 0.019);
   ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
   ctx.textAlign = "center";
   ctx.fillText(theme.tagline, W / 2, y);
-  y += Math.round(H * 0.025);
+  ctx.restore();
+  y += Math.round(H * 0.028);
 
   if (hero) {
     // Dish title
     const titleSize =
       format.key === "story"
-        ? Math.round(H * 0.05)
+        ? Math.round(H * 0.052)
         : format.key === "landscape"
-          ? Math.round(H * 0.07)
-          : Math.round(H * 0.062);
+          ? Math.round(H * 0.072)
+          : Math.round(H * 0.064);
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = 12;
     ctx.fillStyle = theme.cream;
     ctx.font = `700 ${titleSize}px ${SERIF}`;
     ctx.textAlign = "center";
@@ -644,18 +657,33 @@ function composeBanner({
     titleLines.forEach((line, i) => {
       ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
-    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
+    ctx.restore();
+    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.018);
 
-    // Description
-    if (hero.item.description) {
-      const descSize = Math.round(H * 0.02);
-      ctx.fillStyle = theme.mute;
-      ctx.font = `italic 400 ${descSize}px ${SERIF}`;
-      const descLines = wrapText(ctx, hero.item.description, innerW - 60, format.key === "landscape" ? 1 : 2);
+    // AI-crafted marketing copy (Groq) takes priority, falls back to scraped description.
+    const copyText =
+      (heroCopy && heroCopy.trim()) ||
+      (hero.item.description && hero.item.description.trim()) ||
+      "";
+    if (copyText) {
+      const descSize = Math.round(H * 0.022);
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.55)";
+      ctx.shadowBlur = 8;
+      ctx.fillStyle = theme.cream;
+      ctx.globalAlpha = 0.92;
+      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+      const descLines = wrapText(
+        ctx,
+        copyText,
+        innerW - 60,
+        format.key === "landscape" ? 2 : 3,
+      );
       descLines.forEach((line, i) => {
-        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.3);
+        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.35);
       });
-      y += measureWrappedHeight(descLines.length, descSize, 1.3) + Math.round(H * 0.02);
+      ctx.restore();
+      y += measureWrappedHeight(descLines.length, descSize, 1.35) + Math.round(H * 0.02);
     }
   }
 
