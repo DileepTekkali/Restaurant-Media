@@ -6,11 +6,13 @@ import { UrlInputForm } from "@/components/UrlInputForm";
 import { ScrapingProgress } from "@/components/ScrapingProgress";
 import { MenuList } from "@/components/MenuList";
 import { BannerStudio } from "@/components/BannerStudio";
+import { CampaignSelector } from "@/components/CampaignSelector";
 import { MenuItem, ScrapeResponse } from "@/types/menu";
+import { CampaignChoice } from "@/types/campaign";
 import { Button } from "@/components/ui/button";
 
 type Status = "idle" | "loading" | "success" | "error";
-type Stage = "menu" | "banner";
+type Stage = "menu" | "campaign" | "banner";
 
 const Index = () => {
   const { toast } = useToast();
@@ -22,6 +24,7 @@ const Index = () => {
   const [errorMsg, setErrorMsg] = useState<string>("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [stage, setStage] = useState<Stage>("menu");
+  const [campaign, setCampaign] = useState<CampaignChoice | null>(null);
 
   const handleScrape = async (url: string) => {
     setStatus("loading");
@@ -32,6 +35,7 @@ const Index = () => {
     setSubmittedUrl(url);
     setSelectedIds(new Set());
     setStage("menu");
+    setCampaign(null);
 
     try {
       const { data, error } = await supabase.functions.invoke<ScrapeResponse>(
@@ -80,6 +84,7 @@ const Index = () => {
     setLogoUrl(null);
     setSelectedIds(new Set());
     setStage("menu");
+    setCampaign(null);
   };
 
   const toggleSelect = (id: string) => {
@@ -105,14 +110,19 @@ const Index = () => {
     [items, selectedIds],
   );
 
-  const goToBanner = () => {
+  const goToCampaign = () => {
     if (selectedItems.length === 0) {
       toast({
         title: "Pick at least one dish",
-        description: "Tap dishes to select them, then generate banners.",
+        description: "Tap dishes to select them, then choose a campaign.",
       });
       return;
     }
+    setStage("campaign");
+  };
+
+  const handleCampaignConfirm = (choice: CampaignChoice) => {
+    setCampaign(choice);
     setStage("banner");
   };
 
