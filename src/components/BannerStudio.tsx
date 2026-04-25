@@ -668,44 +668,46 @@ function composeBanner({
     ctx.fillText(priceText, bx + (bw + notch) / 2, by + padY + labelSize + priceSize + 4);
   }
 
-  /* ──── 7) Content band BELOW photo: tagline + dish name + description + companions ──── */
+  /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
   const padX = m + Math.round(W * 0.02);
   const innerW = W - padX * 2;
-  let y = contentTop + Math.round(contentH * 0.1);
-
-  // Tagline (small, italic serif, accent color)
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 6;
-  ctx.fillStyle = theme.accent;
-  const tagSize = Math.round(H * 0.019);
-  ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
-  ctx.textAlign = "center";
-  ctx.fillText(theme.tagline, W / 2, y);
-  ctx.restore();
-  y += Math.round(H * 0.028);
+  let y = contentTop + Math.round(contentH * 0.12);
 
   if (hero) {
-    // Dish title
-    const titleSize =
+    // Dish title — dynamically sized so long names always fit on 1-2 lines
+    // without overflowing the safe inner width.
+    const baseTitleSize =
       format.key === "story"
         ? Math.round(H * 0.052)
         : format.key === "landscape"
           ? Math.round(H * 0.072)
           : Math.round(H * 0.064);
+    const minTitleSize = Math.round(baseTitleSize * 0.55);
+    const titleMaxLines = format.key === "landscape" ? 1 : 2;
+
+    let titleSize = baseTitleSize;
+    let titleLines: string[] = [];
+    // Shrink until the longest wrapped line fits AND we don't need ellipsis.
+    while (titleSize >= minTitleSize) {
+      ctx.font = `700 ${titleSize}px ${SERIF}`;
+      titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
+      const longest = Math.max(...titleLines.map((l) => ctx.measureText(l).width));
+      const noEllipsis = !titleLines[titleLines.length - 1]?.endsWith("…");
+      if (longest <= innerW && noEllipsis) break;
+      titleSize -= 4;
+    }
+
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.7)";
-    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(0,0,0,0.75)";
+    ctx.shadowBlur = 14;
     ctx.fillStyle = theme.cream;
     ctx.font = `700 ${titleSize}px ${SERIF}`;
     ctx.textAlign = "center";
-    const titleMaxLines = format.key === "landscape" ? 1 : 2;
-    const titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
     titleLines.forEach((line, i) => {
       ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
     ctx.restore();
-    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.018);
+    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
 
     // AI-crafted marketing copy (Groq) takes priority, falls back to scraped description.
     const copyText =
@@ -713,24 +715,33 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
+      // Description must end at least `safeBottom` above the inner border so it
+      // never touches the yellow hairline frame.
+      const safeBottom = H - m - Math.round(H * 0.06);
       const descSize = Math.round(H * 0.022);
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.55)";
-      ctx.shadowBlur = 8;
-      ctx.fillStyle = theme.cream;
-      ctx.globalAlpha = 0.92;
       ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-      const descLines = wrapText(
-        ctx,
-        copyText,
-        innerW - 60,
-        format.key === "landscape" ? 2 : 3,
-      );
+      const maxDescLines = format.key === "landscape" ? 2 : 3;
+      const descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
+      const descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+
+      // If description would collide with the bottom safe zone, push it up.
+      let descTop = y;
+      if (descTop + descBlockH > safeBottom) {
+        descTop = Math.max(y, safeBottom - descBlockH);
+      }
+
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.6)";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = theme.cream;
+      ctx.globalAlpha = 0.94;
+      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+      ctx.textAlign = "center";
       descLines.forEach((line, i) => {
-        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.35);
+        ctx.fillText(line, W / 2, descTop + (i + 1) * descSize * 1.35);
       });
       ctx.restore();
-      y += measureWrappedHeight(descLines.length, descSize, 1.35) + Math.round(H * 0.02);
+      y = descTop + descBlockH + Math.round(H * 0.02);
     }
   }
 
