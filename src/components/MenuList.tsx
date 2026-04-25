@@ -112,6 +112,7 @@ export const MenuList = ({
                     key={item.id}
                     item={item}
                     accentVar={accentVar}
+                    currency={currency}
                     selectable={selectable}
                     selected={selectedIds?.has(item.id)}
                     onToggleSelect={onToggleSelect}
