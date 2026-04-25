@@ -84,7 +84,7 @@ export function resolveCampaignTheme(choice: CampaignChoice): CampaignTheme {
       accent: "#c9a24b",
       accentSoft: "#e2c179",
       mute: "rgba(245, 239, 228, 0.72)",
-      motif: "stamp",
+      motif: "editorial",
       photoStyle:
         "warm golden hour light, rustic wooden table, steam rising, cozy chef-made plating",
       footerBadge: "AVAILABLE TODAY",
@@ -220,7 +220,7 @@ function resolveFestivalTheme(f: FestivalKey): CampaignTheme {
         accent: "#f97316",
         accentSoft: "#fdba74",
         mute: "rgba(253, 242, 233, 0.72)",
-        motif: "stamp",
+        motif: "editorial",
         photoStyle:
           "Halloween themed plating, dark moody background, smoke and shadows, dramatic orange accent lighting, witchy garnish",
         footerBadge: "OCT 31 ONLY",
