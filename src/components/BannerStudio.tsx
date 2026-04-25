@@ -479,7 +479,9 @@ function composeBanner({
   ctx.lineWidth = 1.5;
   ctx.strokeRect(m, m, W - m * 2, H - m * 2);
 
-  /* ──── 5) Header band: logo + eyebrow + restaurant name ──── */
+  /* ──── 5) Header band: logo OR restaurant wordmark + eyebrow + sub-tagline ──── */
+  // We never render BOTH a logo and the restaurant name — branding is one or the other.
+  // Restaurant detail lines (e.g. "Veeraswamy | Indian fine dining") are intentionally omitted.
   let cursorY = Math.round(headerH * 0.32);
 
   if (logo) {
@@ -515,9 +517,29 @@ function composeBanner({
     ctx.shadowOffsetY = 2;
     ctx.drawImage(logo, lx, ly, lw, lh);
     ctx.restore();
-    cursorY = ly + lh + Math.round(headerH * 0.18);
+    cursorY = ly + lh + Math.round(headerH * 0.16);
   } else {
-    cursorY = Math.round(headerH * 0.45);
+    // No logo → restaurant name acts as the wordmark, dynamically sized to fit on one line.
+    const maxNameW = W - m * 4;
+    let nameSize = Math.round(H * 0.052);
+    const minNameSize = Math.round(H * 0.028);
+    while (nameSize >= minNameSize) {
+      ctx.font = `700 ${nameSize}px ${SERIF}`;
+      if (ctx.measureText(restaurantName).width <= maxNameW) break;
+      nameSize -= 2;
+    }
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.8)";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = theme.cream;
+    ctx.font = `700 ${nameSize}px ${SERIF}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    const nameLines = wrapText(ctx, restaurantName, maxNameW, 1);
+    const nameY = Math.round(headerH * 0.42);
+    ctx.fillText(nameLines[0], W / 2, nameY + nameSize * 0.85);
+    ctx.restore();
+    cursorY = nameY + nameSize + Math.round(H * 0.012);
   }
 
   // Eyebrow (campaign type)
@@ -525,25 +547,33 @@ function composeBanner({
   ctx.shadowColor = "rgba(0,0,0,0.7)";
   ctx.shadowBlur = 8;
   ctx.fillStyle = theme.accentSoft;
-  ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
+  const eyebrowSize = Math.round(H * 0.018);
+  ctx.font = `600 ${eyebrowSize}px ${SANS}`;
   drawTrackedText(ctx, theme.eyebrow, W / 2, cursorY, Math.round(H * 0.006), "center");
   ctx.restore();
-  cursorY += Math.round(H * 0.026);
+  cursorY += Math.round(H * 0.022);
 
-  // Restaurant name — acts as the wordmark when no logo, supporting label when logo is present.
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.8)";
-  ctx.shadowBlur = 12;
-  ctx.fillStyle = theme.cream;
-  const nameSize = logo ? Math.round(H * 0.028) : Math.round(H * 0.052);
-  ctx.font = logo
-    ? `italic 500 ${nameSize}px ${SERIF}`
-    : `700 ${nameSize}px ${SERIF}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
-  ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
-  ctx.restore();
+  // Sub-tagline (e.g. "Festival of lights", "Merry & bright") — dynamically sized.
+  if (theme.tagline) {
+    const maxTagW = W - m * 4;
+    let tagSize = Math.round(H * 0.022);
+    const minTagSize = Math.round(H * 0.014);
+    while (tagSize >= minTagSize) {
+      ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
+      if (ctx.measureText(theme.tagline).width <= maxTagW) break;
+      tagSize -= 1;
+    }
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = theme.cream;
+    ctx.globalAlpha = 0.92;
+    ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(theme.tagline, W / 2, cursorY + tagSize * 0.9);
+    ctx.restore();
+  }
 
   /* ──── 6) Hero "SPECIAL PRICE" tag — sits in TOP-RIGHT of photo band ──── */
   if (hero?.item.price) {
