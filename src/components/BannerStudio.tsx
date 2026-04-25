@@ -594,34 +594,78 @@ function composeBanner({
   ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
   ctx.restore();
 
-  /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
+  /* ──── 6) Hero "SPECIAL PRICE" tag — sits in TOP-RIGHT of photo band ──── */
   if (hero?.item.price) {
-    ctx.font = `700 ${Math.round(H * 0.024)}px ${SANS}`;
     const priceText = formatPriceWithCurrency(hero.item.price, currency);
-    const tw = ctx.measureText(priceText).width;
-    const padX = 24;
+    const labelSize = Math.round(H * 0.013);
+    const priceSize = Math.round(H * 0.03);
+    ctx.font = `700 ${priceSize}px ${SANS}`;
+    const priceW = ctx.measureText(priceText).width;
+    ctx.font = `700 ${labelSize}px ${SANS}`;
+    const labelW = ctx.measureText("SPECIAL PRICE").width;
+    const padX = 22;
     const padY = 14;
-    const bw = tw + padX * 2;
-    const bh = Math.round(H * 0.024) + padY * 2;
-    const bx = W - m - bw - 10;
-    const by = photoTop + 14;
+    const bw = Math.max(priceW, labelW) + padX * 2;
+    const bh = labelSize + priceSize + padY * 2 + 6;
+    const bx = W - m - bw - 12;
+    const by = photoTop + 16;
+
+    // Notch (price-tag look) on the left side
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = 14;
-    ctx.shadowOffsetY = 3;
-    roundRect(ctx, bx, by, bw, bh, bh / 2);
-    ctx.fillStyle = "rgba(0,0,0,0.78)";
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 4;
+    ctx.beginPath();
+    const notch = 14;
+    ctx.moveTo(bx + notch, by);
+    ctx.lineTo(bx + bw - 10, by);
+    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 10);
+    ctx.lineTo(bx + bw, by + bh - 10);
+    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - 10, by + bh);
+    ctx.lineTo(bx + notch, by + bh);
+    ctx.lineTo(bx, by + bh / 2);
+    ctx.closePath();
+    ctx.fillStyle = theme.accent;
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = theme.accent;
-    ctx.lineWidth = 1.5;
-    roundRect(ctx, bx, by, bw, bh, bh / 2);
+
+    // Inner stitch line
+    ctx.strokeStyle = `${theme.ink}88`;
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bx + notch + 6, by + 6);
+    ctx.lineTo(bx + bw - 6, by + 6);
+    ctx.lineTo(bx + bw - 6, by + bh - 6);
+    ctx.lineTo(bx + notch + 6, by + bh - 6);
+    ctx.closePath();
     ctx.stroke();
-    ctx.fillStyle = theme.accentSoft;
+    ctx.setLineDash([]);
+
+    // Punch hole detail
+    ctx.fillStyle = theme.ink;
+    ctx.beginPath();
+    ctx.arc(bx + 8, by + bh / 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // "SPECIAL PRICE" label
+    ctx.fillStyle = theme.ink;
+    ctx.font = `700 ${labelSize}px ${SANS}`;
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(priceText, bx + bw / 2, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
+    drawTrackedText(
+      ctx,
+      "SPECIAL PRICE",
+      bx + (bw + notch) / 2,
+      by + padY + labelSize,
+      1.2,
+      "center",
+    );
+
+    // Price value
+    ctx.fillStyle = theme.ink;
+    ctx.font = `800 ${priceSize}px ${SANS}`;
+    ctx.fillText(priceText, bx + (bw + notch) / 2, by + padY + labelSize + priceSize + 4);
   }
 
   /* ──── 7) Content band BELOW photo: tagline + dish name + description + companions ──── */
