@@ -578,15 +578,31 @@ function composeBanner({
   /* ──── 6) Hero "SPECIAL PRICE" tag — sits in TOP-RIGHT of photo band ──── */
   if (hero?.item.price) {
     const priceText = formatPriceWithCurrency(hero.item.price, currency);
+    const labelText = "SPECIAL PRICE";
+    const labelTracking = 1.2;
     const labelSize = Math.round(H * 0.013);
-    const priceSize = Math.round(H * 0.03);
-    ctx.font = `700 ${priceSize}px ${SANS}`;
-    const priceW = ctx.measureText(priceText).width;
-    ctx.font = `700 ${labelSize}px ${SANS}`;
-    const labelW = ctx.measureText("SPECIAL PRICE").width;
+    let priceSize = Math.round(H * 0.03);
     const padX = 22;
     const padY = 14;
-    const bw = Math.max(priceW, labelW) + padX * 2;
+    const notch = 14;
+    const maxTagW = Math.round(W * 0.42); // never wider than ~42% of canvas
+
+    // Width of label including tracking (drawTrackedText spaces chars by `tracking`).
+    ctx.font = `700 ${labelSize}px ${SANS}`;
+    const labelW = ctx.measureText(labelText).width + labelTracking * (labelText.length - 1);
+
+    // Shrink price font until the price text fits within the tag's max usable width.
+    const usableMax = maxTagW - notch - padX * 2;
+    let priceW: number;
+    while (true) {
+      ctx.font = `800 ${priceSize}px ${SANS}`;
+      priceW = ctx.measureText(priceText).width;
+      if (priceW <= usableMax || priceSize <= Math.round(H * 0.018)) break;
+      priceSize -= 1;
+    }
+
+    const contentW = Math.max(priceW, labelW);
+    const bw = contentW + padX * 2 + notch; // include notch in total tag width
     const bh = labelSize + priceSize + padY * 2 + 6;
     const bx = W - m - bw - 12;
     const by = photoTop + 16;
@@ -597,7 +613,6 @@ function composeBanner({
     ctx.shadowBlur = 16;
     ctx.shadowOffsetY = 4;
     ctx.beginPath();
-    const notch = 14;
     ctx.moveTo(bx + notch, by);
     ctx.lineTo(bx + bw - 10, by);
     ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 10);
@@ -629,24 +644,20 @@ function composeBanner({
     ctx.arc(bx + 8, by + bh / 2, 4, 0, Math.PI * 2);
     ctx.fill();
 
+    // Center X for both lines is the middle of the text area: [bx+notch, bx+bw]
+    const textCx = bx + notch + (bw - notch) / 2;
+
     // "SPECIAL PRICE" label
     ctx.fillStyle = theme.ink;
     ctx.font = `700 ${labelSize}px ${SANS}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    drawTrackedText(
-      ctx,
-      "SPECIAL PRICE",
-      bx + (bw + notch) / 2,
-      by + padY + labelSize,
-      1.2,
-      "center",
-    );
+    drawTrackedText(ctx, labelText, textCx, by + padY + labelSize, labelTracking, "center");
 
     // Price value
     ctx.fillStyle = theme.ink;
     ctx.font = `800 ${priceSize}px ${SANS}`;
-    ctx.fillText(priceText, bx + (bw + notch) / 2, by + padY + labelSize + priceSize + 4);
+    ctx.fillText(priceText, textCx, by + padY + labelSize + priceSize + 4);
   }
 
   /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
