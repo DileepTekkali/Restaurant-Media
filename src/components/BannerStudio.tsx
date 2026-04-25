@@ -486,7 +486,8 @@ function composeBanner({
   const ctx = canvas.getContext("2d")!;
   const W = format.width;
   const H = format.height;
-  const cleanUrl = websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  // websiteUrl is intentionally not rendered on banners — kept in props for future use.
+  void websiteUrl;
   const hero = dishes[0];
 
   /* ──── Layout bands (non-overlapping by construction) ──── */
@@ -747,7 +748,7 @@ function composeBanner({
 
   /* ──── 8) Companion dishes (chips with dividers) ──── */
   const companions = dishes.slice(1);
-  const footerReserve = Math.round(H * 0.075); // reserve space for footer
+  const footerReserve = Math.round(H * 0.085); // reserve space for footer badge
   const companionsTop = y + Math.round(H * 0.015);
   const companionsAvailable = H - m - footerReserve - companionsTop;
 
