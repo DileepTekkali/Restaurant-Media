@@ -579,13 +579,15 @@ function composeBanner({
   ctx.restore();
   cursorY += Math.round(H * 0.026);
 
-  // Restaurant name
+  // Restaurant name — acts as the wordmark when no logo, supporting label when logo is present.
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.75)";
-  ctx.shadowBlur = 10;
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 12;
   ctx.fillStyle = theme.cream;
-  const nameSize = Math.round(H * 0.034);
-  ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
+  const nameSize = logo ? Math.round(H * 0.028) : Math.round(H * 0.052);
+  ctx.font = logo
+    ? `italic 500 ${nameSize}px ${SERIF}`
+    : `700 ${nameSize}px ${SERIF}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
