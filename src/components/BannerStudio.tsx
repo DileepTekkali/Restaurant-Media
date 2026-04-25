@@ -479,7 +479,9 @@ function composeBanner({
   ctx.lineWidth = 1.5;
   ctx.strokeRect(m, m, W - m * 2, H - m * 2);
 
-  /* ──── 5) Header band: logo + eyebrow + restaurant name ──── */
+  /* ──── 5) Header band: logo OR restaurant wordmark + eyebrow + sub-tagline ──── */
+  // We never render BOTH a logo and the restaurant name — branding is one or the other.
+  // Restaurant detail lines (e.g. "Veeraswamy | Indian fine dining") are intentionally omitted.
   let cursorY = Math.round(headerH * 0.32);
 
   if (logo) {
@@ -515,9 +517,29 @@ function composeBanner({
     ctx.shadowOffsetY = 2;
     ctx.drawImage(logo, lx, ly, lw, lh);
     ctx.restore();
-    cursorY = ly + lh + Math.round(headerH * 0.18);
+    cursorY = ly + lh + Math.round(headerH * 0.16);
   } else {
-    cursorY = Math.round(headerH * 0.45);
+    // No logo → restaurant name acts as the wordmark, dynamically sized to fit on one line.
+    const maxNameW = W - m * 4;
+    let nameSize = Math.round(H * 0.052);
+    const minNameSize = Math.round(H * 0.028);
+    while (nameSize >= minNameSize) {
+      ctx.font = `700 ${nameSize}px ${SERIF}`;
+      if (ctx.measureText(restaurantName).width <= maxNameW) break;
+      nameSize -= 2;
+    }
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.8)";
+    ctx.shadowBlur = 12;
+    ctx.fillStyle = theme.cream;
+    ctx.font = `700 ${nameSize}px ${SERIF}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    const nameLines = wrapText(ctx, restaurantName, maxNameW, 1);
+    const nameY = Math.round(headerH * 0.42);
+    ctx.fillText(nameLines[0], W / 2, nameY + nameSize * 0.85);
+    ctx.restore();
+    cursorY = nameY + nameSize + Math.round(H * 0.012);
   }
 
   // Eyebrow (campaign type)
@@ -525,38 +547,62 @@ function composeBanner({
   ctx.shadowColor = "rgba(0,0,0,0.7)";
   ctx.shadowBlur = 8;
   ctx.fillStyle = theme.accentSoft;
-  ctx.font = `600 ${Math.round(H * 0.018)}px ${SANS}`;
+  const eyebrowSize = Math.round(H * 0.018);
+  ctx.font = `600 ${eyebrowSize}px ${SANS}`;
   drawTrackedText(ctx, theme.eyebrow, W / 2, cursorY, Math.round(H * 0.006), "center");
   ctx.restore();
-  cursorY += Math.round(H * 0.026);
+  cursorY += Math.round(H * 0.022);
 
-  // Restaurant name — acts as the wordmark when no logo, supporting label when logo is present.
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.8)";
-  ctx.shadowBlur = 12;
-  ctx.fillStyle = theme.cream;
-  const nameSize = logo ? Math.round(H * 0.028) : Math.round(H * 0.052);
-  ctx.font = logo
-    ? `italic 500 ${nameSize}px ${SERIF}`
-    : `700 ${nameSize}px ${SERIF}`;
-  ctx.textAlign = "center";
-  ctx.textBaseline = "alphabetic";
-  const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
-  ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
-  ctx.restore();
+  // Sub-tagline (e.g. "Festival of lights", "Merry & bright") — dynamically sized.
+  if (theme.tagline) {
+    const maxTagW = W - m * 4;
+    let tagSize = Math.round(H * 0.022);
+    const minTagSize = Math.round(H * 0.014);
+    while (tagSize >= minTagSize) {
+      ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
+      if (ctx.measureText(theme.tagline).width <= maxTagW) break;
+      tagSize -= 1;
+    }
+    ctx.save();
+    ctx.shadowColor = "rgba(0,0,0,0.7)";
+    ctx.shadowBlur = 8;
+    ctx.fillStyle = theme.cream;
+    ctx.globalAlpha = 0.92;
+    ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "alphabetic";
+    ctx.fillText(theme.tagline, W / 2, cursorY + tagSize * 0.9);
+    ctx.restore();
+  }
 
   /* ──── 6) Hero "SPECIAL PRICE" tag — sits in TOP-RIGHT of photo band ──── */
   if (hero?.item.price) {
     const priceText = formatPriceWithCurrency(hero.item.price, currency);
+    const labelText = "SPECIAL PRICE";
+    const labelTracking = 1.2;
     const labelSize = Math.round(H * 0.013);
-    const priceSize = Math.round(H * 0.03);
-    ctx.font = `700 ${priceSize}px ${SANS}`;
-    const priceW = ctx.measureText(priceText).width;
-    ctx.font = `700 ${labelSize}px ${SANS}`;
-    const labelW = ctx.measureText("SPECIAL PRICE").width;
+    let priceSize = Math.round(H * 0.03);
     const padX = 22;
     const padY = 14;
-    const bw = Math.max(priceW, labelW) + padX * 2;
+    const notch = 14;
+    const maxTagW = Math.round(W * 0.42); // never wider than ~42% of canvas
+
+    // Width of label including tracking (drawTrackedText spaces chars by `tracking`).
+    ctx.font = `700 ${labelSize}px ${SANS}`;
+    const labelW = ctx.measureText(labelText).width + labelTracking * (labelText.length - 1);
+
+    // Shrink price font until the price text fits within the tag's max usable width.
+    const usableMax = maxTagW - notch - padX * 2;
+    let priceW: number;
+    while (true) {
+      ctx.font = `800 ${priceSize}px ${SANS}`;
+      priceW = ctx.measureText(priceText).width;
+      if (priceW <= usableMax || priceSize <= Math.round(H * 0.018)) break;
+      priceSize -= 1;
+    }
+
+    const contentW = Math.max(priceW, labelW);
+    const bw = contentW + padX * 2 + notch; // include notch in total tag width
     const bh = labelSize + priceSize + padY * 2 + 6;
     const bx = W - m - bw - 12;
     const by = photoTop + 16;
@@ -567,7 +613,6 @@ function composeBanner({
     ctx.shadowBlur = 16;
     ctx.shadowOffsetY = 4;
     ctx.beginPath();
-    const notch = 14;
     ctx.moveTo(bx + notch, by);
     ctx.lineTo(bx + bw - 10, by);
     ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 10);
@@ -599,24 +644,20 @@ function composeBanner({
     ctx.arc(bx + 8, by + bh / 2, 4, 0, Math.PI * 2);
     ctx.fill();
 
+    // Center X for both lines is the middle of the text area: [bx+notch, bx+bw]
+    const textCx = bx + notch + (bw - notch) / 2;
+
     // "SPECIAL PRICE" label
     ctx.fillStyle = theme.ink;
     ctx.font = `700 ${labelSize}px ${SANS}`;
     ctx.textAlign = "center";
     ctx.textBaseline = "alphabetic";
-    drawTrackedText(
-      ctx,
-      "SPECIAL PRICE",
-      bx + (bw + notch) / 2,
-      by + padY + labelSize,
-      1.2,
-      "center",
-    );
+    drawTrackedText(ctx, labelText, textCx, by + padY + labelSize, labelTracking, "center");
 
     // Price value
     ctx.fillStyle = theme.ink;
     ctx.font = `800 ${priceSize}px ${SANS}`;
-    ctx.fillText(priceText, bx + (bw + notch) / 2, by + padY + labelSize + priceSize + 4);
+    ctx.fillText(priceText, textCx, by + padY + labelSize + priceSize + 4);
   }
 
   /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
@@ -666,19 +707,30 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
-      // Description must end at least `safeBottom` above the inner border so it
-      // never touches the yellow hairline frame.
-      const safeBottom = H - m - Math.round(H * 0.06);
-      const descSize = Math.round(H * 0.022);
-      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-      const maxDescLines = format.key === "landscape" ? 2 : 3;
-      const descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
-      const descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+      // Reserve space for the footer badge AND the inner border so the description
+      // never collides with "AVAILABLE TODAY" or touches the yellow hairline.
+      const footerReserve = Math.round(H * 0.085);
+      const safeBottom = H - m - footerReserve - Math.round(H * 0.02);
 
-      // If description would collide with the bottom safe zone, push it up.
+      // Dynamically shrink description size and line count to fit the available
+      // vertical space without overflowing into the footer badge.
+      const maxDescLines = format.key === "landscape" ? 2 : 3;
+      const minDescSize = Math.round(H * 0.014);
+      let descSize = Math.round(H * 0.022);
+      let descLines: string[] = [];
+      let descBlockH = 0;
+      while (descSize >= minDescSize) {
+        ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+        descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
+        descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+        if (y + descBlockH <= safeBottom) break;
+        descSize -= 1;
+      }
+
+      // If still too tall, push it up so the bottom edge sits at safeBottom.
       let descTop = y;
       if (descTop + descBlockH > safeBottom) {
-        descTop = Math.max(y, safeBottom - descBlockH);
+        descTop = Math.max(contentTop + 8, safeBottom - descBlockH);
       }
 
       ctx.save();
