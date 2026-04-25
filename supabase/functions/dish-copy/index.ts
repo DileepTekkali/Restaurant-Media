@@ -43,10 +43,17 @@ Deno.serve(async (req) => {
 
     const occasion =
       body.campaignType === "festive_special"
-        ? `${body.festival ?? "festive"} celebration`
+        ? `${body.festival ?? "festive"} celebration menu`
         : body.campaignType === "new_arrival"
           ? "a brand-new menu launch"
           : "today's chef special";
+
+    const moodHint =
+      body.campaignType === "festive_special"
+        ? `Subtly evoke the mood of ${body.festival ?? "the festival"} (lights, warmth, tradition, togetherness) without naming the festival explicitly.`
+        : body.campaignType === "new_arrival"
+          ? "Convey freshness, novelty, and a sense of discovery."
+          : "Convey freshness, craftsmanship, and chef-driven care for today.";
 
     const sys =
       "You are a senior food copywriter for high-end restaurants. " +
@@ -54,6 +61,7 @@ Deno.serve(async (req) => {
       "Rules: 12 to 20 words, no emoji, no hashtags, no quotation marks, " +
       "no exclamation marks, no markdown, present-tense, evoke flavor and texture. " +
       "Do NOT include the price. Do NOT include the dish name verbatim more than once. " +
+      "Tailor the tone to the campaign occasion provided. " +
       "Output ONLY the line, nothing else.";
 
     const user = [
@@ -61,6 +69,7 @@ Deno.serve(async (req) => {
       body.dishDescription ? `Existing description: ${body.dishDescription}` : "",
       body.restaurantName ? `Restaurant: ${body.restaurantName}` : "",
       `Occasion: ${occasion}`,
+      `Tone: ${moodHint}`,
     ]
       .filter(Boolean)
       .join("\n");
