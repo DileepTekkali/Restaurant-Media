@@ -1,4 +1,6 @@
+import { useMemo } from "react";
 import { MenuItem, GENERIC_CATEGORY_ORDER, getCategoryColorVar } from "@/types/menu";
+import { detectMenuCurrency } from "@/lib/currency";
 import { MenuItemCard } from "./MenuItemCard";
 
 interface MenuListProps {
@@ -22,6 +24,8 @@ export const MenuList = ({
   onToggleSelect,
   onSelectCategory,
 }: MenuListProps) => {
+  const currency = useMemo(() => detectMenuCurrency(items), [items]);
+
   const grouped = new Map<string, MenuItem[]>();
   for (const item of items) {
     const cat = (item.category && item.category.trim()) || "Other";
@@ -108,6 +112,7 @@ export const MenuList = ({
                     key={item.id}
                     item={item}
                     accentVar={accentVar}
+                    currency={currency}
                     selectable={selectable}
                     selected={selectedIds?.has(item.id)}
                     onToggleSelect={onToggleSelect}

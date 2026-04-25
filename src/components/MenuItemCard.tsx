@@ -1,10 +1,13 @@
 import { MenuItem } from "@/types/menu";
 import { Tag, Check } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { formatPriceWithCurrency } from "@/lib/currency";
 
 interface MenuItemCardProps {
   item: MenuItem;
   accentVar: string;
+  /** Currency symbol to use when an item's price has no explicit symbol. */
+  currency: string;
   selectable?: boolean;
   selected?: boolean;
   onToggleSelect?: (id: string) => void;
@@ -13,11 +16,13 @@ interface MenuItemCardProps {
 export const MenuItemCard = ({
   item,
   accentVar,
+  currency,
   selectable = false,
   selected = false,
   onToggleSelect,
 }: MenuItemCardProps) => {
   const accent = `hsl(var(${accentVar}))`;
+  const displayPrice = item.price ? formatPriceWithCurrency(item.price, currency) : null;
 
   const handleClick = () => {
     if (selectable && onToggleSelect) onToggleSelect(item.id);
@@ -77,7 +82,7 @@ export const MenuItemCard = ({
         <span
           className="shrink-0 rounded-full px-3 py-1 text-sm font-bold tracking-wide"
           style={
-            item.price
+            displayPrice
               ? {
                   backgroundColor: `hsl(var(${accentVar}) / 0.12)`,
                   color: accent,
@@ -87,10 +92,10 @@ export const MenuItemCard = ({
                   color: "hsl(var(--muted-foreground))",
                 }
           }
-          aria-label={item.price ? `Price ${item.price}` : "Price not listed"}
-          title={item.price ? undefined : "Price not listed on website"}
+          aria-label={displayPrice ? `Price ${displayPrice}` : "Price not listed"}
+          title={displayPrice ? undefined : "Price not listed on website"}
         >
-          {item.price || "—"}
+          {displayPrice || "—"}
         </span>
       </div>
 

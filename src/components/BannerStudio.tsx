@@ -107,58 +107,8 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-/* ────────────── Currency helpers ────────────── */
-
-const CURRENCY_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(?:INR|Rs\.?|rupees?)\b/i, "₹"],
-  [/\b(?:USD|US\$)\b/i, "$"],
-  [/\b(?:EUR|euros?)\b/i, "€"],
-  [/\b(?:GBP|pounds?|sterling)\b/i, "£"],
-  [/\b(?:JPY|yen)\b/i, "¥"],
-  [/\b(?:AED|dirhams?)\b/i, "د.إ"],
-  [/\b(?:SAR|riyals?)\b/i, "﷼"],
-];
-
-const CURRENCY_SYMBOLS = ["₹", "$", "€", "£", "¥", "د.إ", "﷼", "₩", "₽", "₺", "฿"];
-
-function detectCurrencyFromPrice(price: string): string | null {
-  for (const sym of CURRENCY_SYMBOLS) {
-    if (price.includes(sym)) return sym;
-  }
-  for (const [re, sym] of CURRENCY_PATTERNS) {
-    if (re.test(price)) return sym;
-  }
-  return null;
-}
-
-/** Pick the most common currency symbol across a menu's prices. */
-function detectMenuCurrency(items: MenuItem[]): string {
-  const counts = new Map<string, number>();
-  for (const it of items) {
-    if (!it.price) continue;
-    const sym = detectCurrencyFromPrice(it.price);
-    if (sym) counts.set(sym, (counts.get(sym) ?? 0) + 1);
-  }
-  let best: string | null = null;
-  let bestN = 0;
-  counts.forEach((n, sym) => {
-    if (n > bestN) {
-      best = sym;
-      bestN = n;
-    }
-  });
-  return best ?? "$"; // safe default
-}
-
-/** Ensure the displayed price string carries an explicit currency symbol. */
-function formatPriceWithCurrency(price: string, fallbackSymbol: string): string {
-  const trimmed = price.trim();
-  if (!trimmed) return trimmed;
-  if (detectCurrencyFromPrice(trimmed)) return trimmed;
-  // Normalize "Rs 250" / "INR 250" style to symbol + number, otherwise prepend.
-  const numeric = trimmed.replace(/^(?:Rs\.?|INR|USD|EUR|GBP|US\$)\s*/i, "");
-  return `${fallbackSymbol}${numeric}`;
-}
+/* ────────────── Currency helpers (shared) ────────────── */
+import { detectMenuCurrency, formatPriceWithCurrency } from "@/lib/currency";
 
 /* ────────────── Canvas helpers ────────────── */
 
@@ -486,7 +436,8 @@ function composeBanner({
   const ctx = canvas.getContext("2d")!;
   const W = format.width;
   const H = format.height;
-  const cleanUrl = websiteUrl.replace(/^https?:\/\//, "").replace(/\/$/, "");
+  // websiteUrl is intentionally not rendered on banners — kept in props for future use.
+  void websiteUrl;
   const hero = dishes[0];
 
   /* ──── Layout bands (non-overlapping by construction) ──── */
@@ -579,87 +530,135 @@ function composeBanner({
   ctx.restore();
   cursorY += Math.round(H * 0.026);
 
-  // Restaurant name
+  // Restaurant name — acts as the wordmark when no logo, supporting label when logo is present.
   ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.75)";
-  ctx.shadowBlur = 10;
+  ctx.shadowColor = "rgba(0,0,0,0.8)";
+  ctx.shadowBlur = 12;
   ctx.fillStyle = theme.cream;
-  const nameSize = Math.round(H * 0.034);
-  ctx.font = `italic 500 ${nameSize}px ${SERIF}`;
+  const nameSize = logo ? Math.round(H * 0.028) : Math.round(H * 0.052);
+  ctx.font = logo
+    ? `italic 500 ${nameSize}px ${SERIF}`
+    : `700 ${nameSize}px ${SERIF}`;
   ctx.textAlign = "center";
   ctx.textBaseline = "alphabetic";
   const nameLines = wrapText(ctx, restaurantName, W - m * 4, 1);
   ctx.fillText(nameLines[0], W / 2, cursorY + nameSize * 0.85);
   ctx.restore();
 
-  /* ──── 6) Hero price badge — sits in the TOP-RIGHT of the photo band, never over text ──── */
+  /* ──── 6) Hero "SPECIAL PRICE" tag — sits in TOP-RIGHT of photo band ──── */
   if (hero?.item.price) {
-    ctx.font = `700 ${Math.round(H * 0.024)}px ${SANS}`;
     const priceText = formatPriceWithCurrency(hero.item.price, currency);
-    const tw = ctx.measureText(priceText).width;
-    const padX = 24;
+    const labelSize = Math.round(H * 0.013);
+    const priceSize = Math.round(H * 0.03);
+    ctx.font = `700 ${priceSize}px ${SANS}`;
+    const priceW = ctx.measureText(priceText).width;
+    ctx.font = `700 ${labelSize}px ${SANS}`;
+    const labelW = ctx.measureText("SPECIAL PRICE").width;
+    const padX = 22;
     const padY = 14;
-    const bw = tw + padX * 2;
-    const bh = Math.round(H * 0.024) + padY * 2;
-    const bx = W - m - bw - 10;
-    const by = photoTop + 14;
+    const bw = Math.max(priceW, labelW) + padX * 2;
+    const bh = labelSize + priceSize + padY * 2 + 6;
+    const bx = W - m - bw - 12;
+    const by = photoTop + 16;
+
+    // Notch (price-tag look) on the left side
     ctx.save();
     ctx.shadowColor = "rgba(0,0,0,0.55)";
-    ctx.shadowBlur = 14;
-    ctx.shadowOffsetY = 3;
-    roundRect(ctx, bx, by, bw, bh, bh / 2);
-    ctx.fillStyle = "rgba(0,0,0,0.78)";
+    ctx.shadowBlur = 16;
+    ctx.shadowOffsetY = 4;
+    ctx.beginPath();
+    const notch = 14;
+    ctx.moveTo(bx + notch, by);
+    ctx.lineTo(bx + bw - 10, by);
+    ctx.quadraticCurveTo(bx + bw, by, bx + bw, by + 10);
+    ctx.lineTo(bx + bw, by + bh - 10);
+    ctx.quadraticCurveTo(bx + bw, by + bh, bx + bw - 10, by + bh);
+    ctx.lineTo(bx + notch, by + bh);
+    ctx.lineTo(bx, by + bh / 2);
+    ctx.closePath();
+    ctx.fillStyle = theme.accent;
     ctx.fill();
     ctx.restore();
-    ctx.strokeStyle = theme.accent;
-    ctx.lineWidth = 1.5;
-    roundRect(ctx, bx, by, bw, bh, bh / 2);
+
+    // Inner stitch line
+    ctx.strokeStyle = `${theme.ink}88`;
+    ctx.setLineDash([3, 3]);
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(bx + notch + 6, by + 6);
+    ctx.lineTo(bx + bw - 6, by + 6);
+    ctx.lineTo(bx + bw - 6, by + bh - 6);
+    ctx.lineTo(bx + notch + 6, by + bh - 6);
+    ctx.closePath();
     ctx.stroke();
-    ctx.fillStyle = theme.accentSoft;
+    ctx.setLineDash([]);
+
+    // Punch hole detail
+    ctx.fillStyle = theme.ink;
+    ctx.beginPath();
+    ctx.arc(bx + 8, by + bh / 2, 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // "SPECIAL PRICE" label
+    ctx.fillStyle = theme.ink;
+    ctx.font = `700 ${labelSize}px ${SANS}`;
     ctx.textAlign = "center";
-    ctx.textBaseline = "middle";
-    ctx.fillText(priceText, bx + bw / 2, by + bh / 2 + 1);
     ctx.textBaseline = "alphabetic";
+    drawTrackedText(
+      ctx,
+      "SPECIAL PRICE",
+      bx + (bw + notch) / 2,
+      by + padY + labelSize,
+      1.2,
+      "center",
+    );
+
+    // Price value
+    ctx.fillStyle = theme.ink;
+    ctx.font = `800 ${priceSize}px ${SANS}`;
+    ctx.fillText(priceText, bx + (bw + notch) / 2, by + padY + labelSize + priceSize + 4);
   }
 
-  /* ──── 7) Content band BELOW photo: tagline + dish name + description + companions ──── */
+  /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
   const padX = m + Math.round(W * 0.02);
   const innerW = W - padX * 2;
-  let y = contentTop + Math.round(contentH * 0.1);
-
-  // Tagline (small, italic serif, accent color)
-  ctx.save();
-  ctx.shadowColor = "rgba(0,0,0,0.6)";
-  ctx.shadowBlur = 6;
-  ctx.fillStyle = theme.accent;
-  const tagSize = Math.round(H * 0.019);
-  ctx.font = `italic 500 ${tagSize}px ${SERIF}`;
-  ctx.textAlign = "center";
-  ctx.fillText(theme.tagline, W / 2, y);
-  ctx.restore();
-  y += Math.round(H * 0.028);
+  let y = contentTop + Math.round(contentH * 0.12);
 
   if (hero) {
-    // Dish title
-    const titleSize =
+    // Dish title — dynamically sized so long names always fit on 1-2 lines
+    // without overflowing the safe inner width.
+    const baseTitleSize =
       format.key === "story"
         ? Math.round(H * 0.052)
         : format.key === "landscape"
           ? Math.round(H * 0.072)
           : Math.round(H * 0.064);
+    const minTitleSize = Math.round(baseTitleSize * 0.55);
+    const titleMaxLines = format.key === "landscape" ? 1 : 2;
+
+    let titleSize = baseTitleSize;
+    let titleLines: string[] = [];
+    // Shrink until the longest wrapped line fits AND we don't need ellipsis.
+    while (titleSize >= minTitleSize) {
+      ctx.font = `700 ${titleSize}px ${SERIF}`;
+      titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
+      const longest = Math.max(...titleLines.map((l) => ctx.measureText(l).width));
+      const noEllipsis = !titleLines[titleLines.length - 1]?.endsWith("…");
+      if (longest <= innerW && noEllipsis) break;
+      titleSize -= 4;
+    }
+
     ctx.save();
-    ctx.shadowColor = "rgba(0,0,0,0.7)";
-    ctx.shadowBlur = 12;
+    ctx.shadowColor = "rgba(0,0,0,0.75)";
+    ctx.shadowBlur = 14;
     ctx.fillStyle = theme.cream;
     ctx.font = `700 ${titleSize}px ${SERIF}`;
     ctx.textAlign = "center";
-    const titleMaxLines = format.key === "landscape" ? 1 : 2;
-    const titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
     titleLines.forEach((line, i) => {
       ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
     ctx.restore();
-    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.018);
+    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
 
     // AI-crafted marketing copy (Groq) takes priority, falls back to scraped description.
     const copyText =
@@ -667,30 +666,39 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
+      // Description must end at least `safeBottom` above the inner border so it
+      // never touches the yellow hairline frame.
+      const safeBottom = H - m - Math.round(H * 0.06);
       const descSize = Math.round(H * 0.022);
-      ctx.save();
-      ctx.shadowColor = "rgba(0,0,0,0.55)";
-      ctx.shadowBlur = 8;
-      ctx.fillStyle = theme.cream;
-      ctx.globalAlpha = 0.92;
       ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-      const descLines = wrapText(
-        ctx,
-        copyText,
-        innerW - 60,
-        format.key === "landscape" ? 2 : 3,
-      );
+      const maxDescLines = format.key === "landscape" ? 2 : 3;
+      const descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
+      const descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+
+      // If description would collide with the bottom safe zone, push it up.
+      let descTop = y;
+      if (descTop + descBlockH > safeBottom) {
+        descTop = Math.max(y, safeBottom - descBlockH);
+      }
+
+      ctx.save();
+      ctx.shadowColor = "rgba(0,0,0,0.6)";
+      ctx.shadowBlur = 10;
+      ctx.fillStyle = theme.cream;
+      ctx.globalAlpha = 0.94;
+      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+      ctx.textAlign = "center";
       descLines.forEach((line, i) => {
-        ctx.fillText(line, W / 2, y + (i + 1) * descSize * 1.35);
+        ctx.fillText(line, W / 2, descTop + (i + 1) * descSize * 1.35);
       });
       ctx.restore();
-      y += measureWrappedHeight(descLines.length, descSize, 1.35) + Math.round(H * 0.02);
+      y = descTop + descBlockH + Math.round(H * 0.02);
     }
   }
 
   /* ──── 8) Companion dishes (chips with dividers) ──── */
   const companions = dishes.slice(1);
-  const footerReserve = Math.round(H * 0.075); // reserve space for footer
+  const footerReserve = Math.round(H * 0.085); // reserve space for footer badge
   const companionsTop = y + Math.round(H * 0.015);
   const companionsAvailable = H - m - footerReserve - companionsTop;
 
@@ -741,18 +749,17 @@ function composeBanner({
     });
   }
 
-  /* ──── 9) Footer: badge + URL ──── */
-  const footY = H - m - Math.round(H * 0.022);
-
+  /* ──── 9) Footer: just the campaign badge (no website URL) ──── */
   if (theme.footerBadge) {
-    ctx.font = `700 ${Math.round(H * 0.014)}px ${SANS}`;
+    const badgeFont = Math.round(H * 0.014);
+    ctx.font = `700 ${badgeFont}px ${SANS}`;
     const tw = ctx.measureText(theme.footerBadge).width;
-    const bpadX = 14;
-    const bpadY = 6;
+    const bpadX = 16;
+    const bpadY = 7;
     const bw = tw + bpadX * 2;
-    const bh = Math.round(H * 0.014) + bpadY * 2;
+    const bh = badgeFont + bpadY * 2;
     const bx = (W - bw) / 2;
-    const by = footY - Math.round(H * 0.05) - bh;
+    const by = H - m - bh - Math.round(H * 0.018);
     roundRect(ctx, bx, by, bw, bh, bh / 2);
     ctx.fillStyle = theme.accent;
     ctx.fill();
@@ -762,15 +769,6 @@ function composeBanner({
     drawTrackedText(ctx, theme.footerBadge, bx + bw / 2, by + bh / 2 + 1, 1, "center");
     ctx.textBaseline = "alphabetic";
   }
-
-  // Tiny rule above URL
-  ctx.fillStyle = theme.accent;
-  const fRuleW = Math.round(W * 0.04);
-  ctx.fillRect(W / 2 - fRuleW / 2, footY - Math.round(H * 0.022), fRuleW, 1);
-
-  ctx.fillStyle = theme.mute;
-  ctx.font = `500 ${Math.round(H * 0.014)}px ${SANS}`;
-  drawTrackedText(ctx, cleanUrl.toUpperCase(), W / 2, footY, Math.round(H * 0.004), "center");
 
   return canvas;
 }
