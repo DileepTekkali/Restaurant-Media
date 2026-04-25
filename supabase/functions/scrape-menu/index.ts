@@ -84,10 +84,10 @@ function findLogoUrl(html: string, baseUrl: string): string | null {
   };
 
   // 1. Logo-ish <img> tags first — usually the actual brand mark.
-  const imgs = doc.querySelectorAll("img") as unknown as NodeListOf<Element>;
+  const imgs = doc.querySelectorAll("img") as unknown as ArrayLike<Element>;
   let bestLogo: string | null = null;
   let bestScore = 0;
-  imgs.forEach((node) => {
+  Array.from(imgs).forEach((node: Element) => {
     const img = node as Element;
     const src = img.getAttribute("src") || img.getAttribute("data-src") || img.getAttribute("data-lazy-src");
     if (!src) return;
@@ -132,10 +132,10 @@ function findLogoUrl(html: string, baseUrl: string): string | null {
   if (appleResolved) return appleResolved;
 
   // 4. <link rel="icon"> (prefer largest sizes)
-  const iconLinks = doc.querySelectorAll('link[rel~="icon"]') as unknown as NodeListOf<Element>;
+  const iconLinks = doc.querySelectorAll('link[rel~="icon"]') as unknown as ArrayLike<Element>;
   let bestIcon: string | null = null;
   let bestIconSize = 0;
-  iconLinks.forEach((node) => {
+  Array.from(iconLinks).forEach((node: Element) => {
     const link = node as Element;
     const href = link.getAttribute("href");
     if (!href) return;
@@ -257,13 +257,13 @@ function extractCandidates(html: string): {
     "[class*='menu-section' i] > :first-child",
   ];
   for (const sel of headingSelectors) {
-    let nodes: NodeListOf<Element>;
+    let nodes: ArrayLike<Element>;
     try {
-      nodes = doc.querySelectorAll(sel) as unknown as NodeListOf<Element>;
+      nodes = doc.querySelectorAll(sel) as unknown as ArrayLike<Element>;
     } catch {
       continue;
     }
-    nodes.forEach((node) => {
+    Array.from(nodes).forEach((node: Element) => {
       const text = (node.textContent || "").replace(/\s+/g, " ").trim();
       if (isPlausibleCategoryHeading(text)) {
         // Title-case-ish: strip trailing punctuation.
@@ -290,13 +290,13 @@ function extractCandidates(html: string): {
   const seen = new Set<string>();
 
   for (const sel of selectors) {
-    let nodes: NodeListOf<Element>;
+    let nodes: ArrayLike<Element>;
     try {
-      nodes = doc.querySelectorAll(sel) as unknown as NodeListOf<Element>;
+      nodes = doc.querySelectorAll(sel) as unknown as ArrayLike<Element>;
     } catch {
       continue;
     }
-    nodes.forEach((node) => {
+    Array.from(nodes).forEach((node: Element) => {
       const text = (node.textContent || "").replace(/\s+/g, " ").trim();
       if (text.length < 8 || text.length > 600) return;
       if (seen.has(text)) return;
