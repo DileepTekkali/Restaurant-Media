@@ -707,19 +707,30 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
-      // Description must end at least `safeBottom` above the inner border so it
-      // never touches the yellow hairline frame.
-      const safeBottom = H - m - Math.round(H * 0.06);
-      const descSize = Math.round(H * 0.022);
-      ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-      const maxDescLines = format.key === "landscape" ? 2 : 3;
-      const descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
-      const descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+      // Reserve space for the footer badge AND the inner border so the description
+      // never collides with "AVAILABLE TODAY" or touches the yellow hairline.
+      const footerReserve = Math.round(H * 0.085);
+      const safeBottom = H - m - footerReserve - Math.round(H * 0.02);
 
-      // If description would collide with the bottom safe zone, push it up.
+      // Dynamically shrink description size and line count to fit the available
+      // vertical space without overflowing into the footer badge.
+      const maxDescLines = format.key === "landscape" ? 2 : 3;
+      const minDescSize = Math.round(H * 0.014);
+      let descSize = Math.round(H * 0.022);
+      let descLines: string[] = [];
+      let descBlockH = 0;
+      while (descSize >= minDescSize) {
+        ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+        descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
+        descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
+        if (y + descBlockH <= safeBottom) break;
+        descSize -= 1;
+      }
+
+      // If still too tall, push it up so the bottom edge sits at safeBottom.
       let descTop = y;
       if (descTop + descBlockH > safeBottom) {
-        descTop = Math.max(y, safeBottom - descBlockH);
+        descTop = Math.max(contentTop + 8, safeBottom - descBlockH);
       }
 
       ctx.save();
