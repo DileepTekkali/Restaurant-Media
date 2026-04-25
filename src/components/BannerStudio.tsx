@@ -798,18 +798,17 @@ function composeBanner({
     });
   }
 
-  /* ──── 9) Footer: badge + URL ──── */
-  const footY = H - m - Math.round(H * 0.022);
-
+  /* ──── 9) Footer: just the campaign badge (no website URL) ──── */
   if (theme.footerBadge) {
-    ctx.font = `700 ${Math.round(H * 0.014)}px ${SANS}`;
+    const badgeFont = Math.round(H * 0.014);
+    ctx.font = `700 ${badgeFont}px ${SANS}`;
     const tw = ctx.measureText(theme.footerBadge).width;
-    const bpadX = 14;
-    const bpadY = 6;
+    const bpadX = 16;
+    const bpadY = 7;
     const bw = tw + bpadX * 2;
-    const bh = Math.round(H * 0.014) + bpadY * 2;
+    const bh = badgeFont + bpadY * 2;
     const bx = (W - bw) / 2;
-    const by = footY - Math.round(H * 0.05) - bh;
+    const by = H - m - bh - Math.round(H * 0.018);
     roundRect(ctx, bx, by, bw, bh, bh / 2);
     ctx.fillStyle = theme.accent;
     ctx.fill();
@@ -819,15 +818,6 @@ function composeBanner({
     drawTrackedText(ctx, theme.footerBadge, bx + bw / 2, by + bh / 2 + 1, 1, "center");
     ctx.textBaseline = "alphabetic";
   }
-
-  // Tiny rule above URL
-  ctx.fillStyle = theme.accent;
-  const fRuleW = Math.round(W * 0.04);
-  ctx.fillRect(W / 2 - fRuleW / 2, footY - Math.round(H * 0.022), fRuleW, 1);
-
-  ctx.fillStyle = theme.mute;
-  ctx.font = `500 ${Math.round(H * 0.014)}px ${SANS}`;
-  drawTrackedText(ctx, cleanUrl.toUpperCase(), W / 2, footY, Math.round(H * 0.004), "center");
 
   return canvas;
 }
