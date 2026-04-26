@@ -1193,16 +1193,24 @@ export const BannerStudio = ({
         )}
       </header>
 
-      <Tabs defaultValue="square" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          {FORMATS.map((f) => (
+      {formatsToRender.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-10 text-center text-sm text-muted-foreground">
+          Select at least one banner size above and tap Apply to generate.
+        </div>
+      ) : (
+      <Tabs defaultValue={formatsToRender[0].key} key={activeFormatsKey} className="w-full">
+        <TabsList
+          className="grid w-full"
+          style={{ gridTemplateColumns: `repeat(${formatsToRender.length}, minmax(0, 1fr))` }}
+        >
+          {formatsToRender.map((f) => (
             <TabsTrigger key={f.key} value={f.key} className="text-xs sm:text-sm">
               {f.label}
             </TabsTrigger>
           ))}
         </TabsList>
 
-        {FORMATS.map((f) => {
+        {formatsToRender.map((f) => {
           const state = banners[f.key];
           return (
             <TabsContent key={f.key} value={f.key} className="mt-6">
