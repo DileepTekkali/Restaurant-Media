@@ -1010,6 +1010,7 @@ export const BannerStudio = ({
 
         for (const format of FORMATS) {
           if (cancelRef.current) return;
+          if (!activeFormats.has(format.key)) continue;
           try {
             const canvas = composeBanner({
               format,
@@ -1040,18 +1041,18 @@ export const BannerStudio = ({
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to generate banners";
         toast({ title: "Banner generation failed", description: msg, variant: "destructive" });
-        setBanners({
-          square: { url: null, loading: false, error: msg },
-          story: { url: null, loading: false, error: msg },
-          landscape: { url: null, loading: false, error: msg },
-        });
+        setBanners((prev) => ({
+          square: activeFormats.has("square") ? { url: null, loading: false, error: msg } : prev.square,
+          story: activeFormats.has("story") ? { url: null, loading: false, error: msg } : prev.story,
+          landscape: activeFormats.has("landscape") ? { url: null, loading: false, error: msg } : prev.landscape,
+        }));
       }
     })();
 
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency, activeFormatsKey, activeFormats]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
@@ -1065,12 +1066,38 @@ export const BannerStudio = ({
   };
 
   const downloadAll = () => {
-    FORMATS.forEach((f, i) => {
+    formatsToRender.forEach((f, i) => {
       setTimeout(() => downloadBanner(f.key), i * 250);
     });
   };
 
-  const allReady = FORMATS.every((f) => banners[f.key].url);
+  const allReady =
+    formatsToRender.length > 0 && formatsToRender.every((f) => banners[f.key].url);
+
+  const toggleFormat = (key: FormatKey) => {
+    setSelectedFormats((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const applySelection = () => {
+    if (selectedFormats.size === 0) {
+      toast({
+        title: "Pick at least one format",
+        description: "Select at least one banner size to generate.",
+      });
+      return;
+    }
+    setActiveFormats(new Set(selectedFormats));
+    setGenerationKey((k) => k + 1);
+  };
+
+  const selectionDirty =
+    selectedFormats.size !== activeFormats.size ||
+    [...selectedFormats].some((k) => !activeFormats.has(k));
 
   return (
     <section className="w-full max-w-5xl animate-fade-in-up">
