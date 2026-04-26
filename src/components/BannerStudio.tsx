@@ -579,29 +579,36 @@ function composeBanner({
   if (hero?.item.price) {
     const priceText = formatPriceWithCurrency(hero.item.price, currency);
     const labelText = "SPECIAL PRICE";
-    const labelTracking = 1.2;
-    const labelSize = Math.round(H * 0.013);
-    let priceSize = Math.round(H * 0.03);
-    const padX = 22;
-    const padY = 14;
+    const labelTracking = 1.0;
+    let labelSize = Math.round(H * 0.013);
+    let priceSize = Math.round(H * 0.028);
+    const padX = 18;
+    const padY = 12;
     const notch = 14;
-    const maxTagW = Math.round(W * 0.42); // never wider than ~42% of canvas
-
-    // Width of label including tracking (drawTrackedText spaces chars by `tracking`).
-    ctx.font = `700 ${labelSize}px ${SANS}`;
-    const labelW = ctx.measureText(labelText).width + labelTracking * (labelText.length - 1);
-
-    // Shrink price font until the price text fits within the tag's max usable width.
+    // Hard ceiling — tag must never exceed this fraction of canvas width.
+    const maxTagW = Math.round(W * 0.4);
     const usableMax = maxTagW - notch - padX * 2;
+
+    // Shrink label font if needed (mainly relevant for narrow landscape).
+    let labelW: number;
+    while (true) {
+      ctx.font = `700 ${labelSize}px ${SANS}`;
+      labelW = ctx.measureText(labelText).width + labelTracking * (labelText.length - 1);
+      if (labelW <= usableMax || labelSize <= 9) break;
+      labelSize -= 1;
+    }
+
+    // Shrink price font until the price text fits within the tag's usable width.
     let priceW: number;
+    const minPriceSize = Math.max(12, Math.round(H * 0.016));
     while (true) {
       ctx.font = `800 ${priceSize}px ${SANS}`;
       priceW = ctx.measureText(priceText).width;
-      if (priceW <= usableMax || priceSize <= Math.round(H * 0.018)) break;
+      if (priceW <= usableMax || priceSize <= minPriceSize) break;
       priceSize -= 1;
     }
 
-    const contentW = Math.max(priceW, labelW);
+    const contentW = Math.min(usableMax, Math.max(priceW, labelW));
     const bw = contentW + padX * 2 + notch; // include notch in total tag width
     const bh = labelSize + priceSize + padY * 2 + 6;
     const bx = W - m - bw - 12;
