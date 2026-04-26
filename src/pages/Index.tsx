@@ -280,7 +280,7 @@ const Index = () => {
       )}
 
       <footer className="relative mt-12 border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-        Built with Lovable Cloud · Phase 2 — restaurant banner generator
+        MENU2MEDIA · Restaurant menus into ready-to-post banners
       </footer>
     </div>
   );
