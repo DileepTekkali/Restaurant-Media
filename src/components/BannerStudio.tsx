@@ -899,6 +899,12 @@ export const BannerStudio = ({
   onBack,
 }: BannerStudioProps) => {
   const { toast } = useToast();
+  const [selectedFormats, setSelectedFormats] = useState<Set<FormatKey>>(
+    new Set<FormatKey>(["square", "story", "landscape"]),
+  );
+  const [activeFormats, setActiveFormats] = useState<Set<FormatKey>>(
+    new Set<FormatKey>(["square", "story", "landscape"]),
+  );
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
     square: { url: null, loading: true, error: null },
     story: { url: null, loading: true, error: null },
@@ -911,6 +917,14 @@ export const BannerStudio = ({
   const cappedItems = useMemo(() => items.slice(0, 5), [items]);
   const theme = useMemo(() => resolveCampaignTheme(campaign), [campaign]);
   const currency = useMemo(() => detectMenuCurrency(items), [items]);
+  const activeFormatsKey = useMemo(
+    () => FORMATS.filter((f) => activeFormats.has(f.key)).map((f) => f.key).join(","),
+    [activeFormats],
+  );
+  const formatsToRender = useMemo(
+    () => FORMATS.filter((f) => activeFormats.has(f.key)),
+    [activeFormats],
+  );
 
   useEffect(() => {
     cancelRef.current = false;
