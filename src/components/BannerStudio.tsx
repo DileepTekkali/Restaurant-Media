@@ -2,6 +2,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Loader2, Download, RefreshCw, ArrowLeft, ImageIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { supabase } from "@/integrations/supabase/client";
 import { MenuItem } from "@/types/menu";
@@ -897,6 +899,12 @@ export const BannerStudio = ({
   onBack,
 }: BannerStudioProps) => {
   const { toast } = useToast();
+  const [selectedFormats, setSelectedFormats] = useState<Set<FormatKey>>(
+    new Set<FormatKey>(["square", "story", "landscape"]),
+  );
+  const [activeFormats, setActiveFormats] = useState<Set<FormatKey>>(
+    new Set<FormatKey>(["square", "story", "landscape"]),
+  );
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
     square: { url: null, loading: true, error: null },
     story: { url: null, loading: true, error: null },
@@ -909,14 +917,36 @@ export const BannerStudio = ({
   const cappedItems = useMemo(() => items.slice(0, 5), [items]);
   const theme = useMemo(() => resolveCampaignTheme(campaign), [campaign]);
   const currency = useMemo(() => detectMenuCurrency(items), [items]);
+  const activeFormatsKey = useMemo(
+    () => FORMATS.filter((f) => activeFormats.has(f.key)).map((f) => f.key).join(","),
+    [activeFormats],
+  );
+  const formatsToRender = useMemo(
+    () => FORMATS.filter((f) => activeFormats.has(f.key)),
+    [activeFormats],
+  );
 
   useEffect(() => {
     cancelRef.current = false;
     setBanners({
-      square: { url: null, loading: true, error: null },
-      story: { url: null, loading: true, error: null },
-      landscape: { url: null, loading: true, error: null },
+      square: {
+        url: null,
+        loading: activeFormats.has("square"),
+        error: activeFormats.has("square") ? null : null,
+      },
+      story: {
+        url: null,
+        loading: activeFormats.has("story"),
+        error: null,
+      },
+      landscape: {
+        url: null,
+        loading: activeFormats.has("landscape"),
+        error: null,
+      },
     });
+
+    if (activeFormats.size === 0) return;
 
     (async () => {
       try {
@@ -980,6 +1010,7 @@ export const BannerStudio = ({
 
         for (const format of FORMATS) {
           if (cancelRef.current) return;
+          if (!activeFormats.has(format.key)) continue;
           try {
             const canvas = composeBanner({
               format,
@@ -1010,18 +1041,18 @@ export const BannerStudio = ({
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to generate banners";
         toast({ title: "Banner generation failed", description: msg, variant: "destructive" });
-        setBanners({
-          square: { url: null, loading: false, error: msg },
-          story: { url: null, loading: false, error: msg },
-          landscape: { url: null, loading: false, error: msg },
-        });
+        setBanners((prev) => ({
+          square: activeFormats.has("square") ? { url: null, loading: false, error: msg } : prev.square,
+          story: activeFormats.has("story") ? { url: null, loading: false, error: msg } : prev.story,
+          landscape: activeFormats.has("landscape") ? { url: null, loading: false, error: msg } : prev.landscape,
+        }));
       }
     })();
 
     return () => {
       cancelRef.current = true;
     };
-  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency]);
+  }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency, activeFormatsKey, activeFormats]);
 
   const downloadBanner = (key: FormatKey) => {
     const banner = banners[key];
@@ -1035,12 +1066,38 @@ export const BannerStudio = ({
   };
 
   const downloadAll = () => {
-    FORMATS.forEach((f, i) => {
+    formatsToRender.forEach((f, i) => {
       setTimeout(() => downloadBanner(f.key), i * 250);
     });
   };
 
-  const allReady = FORMATS.every((f) => banners[f.key].url);
+  const allReady =
+    formatsToRender.length > 0 && formatsToRender.every((f) => banners[f.key].url);
+
+  const toggleFormat = (key: FormatKey) => {
+    setSelectedFormats((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const applySelection = () => {
+    if (selectedFormats.size === 0) {
+      toast({
+        title: "Pick at least one format",
+        description: "Select at least one banner size to generate.",
+      });
+      return;
+    }
+    setActiveFormats(new Set(selectedFormats));
+    setGenerationKey((k) => k + 1);
+  };
+
+  const selectionDirty =
+    selectedFormats.size !== activeFormats.size ||
+    [...selectedFormats].some((k) => !activeFormats.has(k));
 
   return (
     <section className="w-full max-w-5xl animate-fade-in-up">
@@ -1055,6 +1112,7 @@ export const BannerStudio = ({
             variant="outline"
             size="sm"
             className="gap-2"
+            disabled={activeFormats.size === 0}
           >
             <RefreshCw className="h-4 w-4" />
             Regenerate
@@ -1066,6 +1124,50 @@ export const BannerStudio = ({
         </div>
       </div>
 
+      {/* Format selector — only generate the sizes you need */}
+      <div className="mb-6 rounded-2xl border border-border bg-card/60 p-4 shadow-soft">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <p className="text-sm font-semibold text-foreground">Choose banner sizes</p>
+            <p className="text-xs text-muted-foreground">
+              Pick 1–3 formats. Only selected sizes will be generated.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {FORMATS.map((f) => {
+              const id = `fmt-${f.key}`;
+              const checked = selectedFormats.has(f.key);
+              return (
+                <Label
+                  key={f.key}
+                  htmlFor={id}
+                  className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    checked
+                      ? "border-primary/40 bg-primary/10 text-foreground"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={() => toggleFormat(f.key)}
+                  />
+                  <span>{f.label}</span>
+                </Label>
+              );
+            })}
+            <Button
+              size="sm"
+              onClick={applySelection}
+              disabled={!selectionDirty || selectedFormats.size === 0}
+              className="gap-2"
+            >
+              Apply
+            </Button>
+          </div>
+        </div>
+      </div>
+
       <header className="mb-6 flex flex-col gap-2 border-b border-border pb-5">
         <p className="text-xs font-semibold uppercase tracking-widest text-primary">
           {theme.eyebrow.toLowerCase()} · banner studio
@@ -1074,7 +1176,7 @@ export const BannerStudio = ({
           {safeName}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 themed formats · dish photography by{" "}
+          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · {formatsToRender.length} themed format{formatsToRender.length === 1 ? "" : "s"} · dish photography by{" "}
           <a
             href="https://pollinations.ai"
             target="_blank"
@@ -1091,16 +1193,24 @@ export const BannerStudio = ({
         )}
       </header>
 
-      <Tabs defaultValue="square" className="w-full">
-        <TabsList className="grid w-full grid-cols-3">
-          {FORMATS.map((f) => (
+      {formatsToRender.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-10 text-center text-sm text-muted-foreground">
+          Select at least one banner size above and tap Apply to generate.
+        </div>
+      ) : (
+      <Tabs defaultValue={formatsToRender[0].key} key={activeFormatsKey} className="w-full">
+        <TabsList
+          className="grid w-full"
+          style={{ gridTemplateColumns: `repeat(${formatsToRender.length}, minmax(0, 1fr))` }}
+        >
+          {formatsToRender.map((f) => (
             <TabsTrigger key={f.key} value={f.key} className="text-xs sm:text-sm">
               {f.label}
             </TabsTrigger>
           ))}
         </TabsList>
 
-        {FORMATS.map((f) => {
+        {formatsToRender.map((f) => {
           const state = banners[f.key];
           return (
             <TabsContent key={f.key} value={f.key} className="mt-6">
@@ -1151,6 +1261,7 @@ export const BannerStudio = ({
           );
         })}
       </Tabs>
+      )}
     </section>
   );
 };
