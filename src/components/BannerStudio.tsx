@@ -929,10 +929,24 @@ export const BannerStudio = ({
   useEffect(() => {
     cancelRef.current = false;
     setBanners({
-      square: { url: null, loading: true, error: null },
-      story: { url: null, loading: true, error: null },
-      landscape: { url: null, loading: true, error: null },
+      square: {
+        url: null,
+        loading: activeFormats.has("square"),
+        error: activeFormats.has("square") ? null : null,
+      },
+      story: {
+        url: null,
+        loading: activeFormats.has("story"),
+        error: null,
+      },
+      landscape: {
+        url: null,
+        loading: activeFormats.has("landscape"),
+        error: null,
+      },
     });
+
+    if (activeFormats.size === 0) return;
 
     (async () => {
       try {
