@@ -45,11 +45,17 @@ export function detectMenuCurrency(items: MenuItem[]): string {
   return best ?? "$";
 }
 
+/** Strip trailing zero decimals: "$28.00" → "$28", "12.50" → "12.5", "10." → "10". */
+export function stripTrailingZeros(price: string): string {
+  return price.replace(/(\d)\.0+(?!\d)/g, "$1").replace(/(\d\.\d*?)0+(?!\d)/g, "$1").replace(/(\d)\.(?!\d)/g, "$1");
+}
+
 /** Ensure the displayed price string carries an explicit currency symbol. */
 export function formatPriceWithCurrency(price: string, fallbackSymbol: string): string {
   const trimmed = price.trim();
   if (!trimmed) return trimmed;
-  if (detectCurrencyFromPrice(trimmed)) return trimmed;
-  const numeric = trimmed.replace(/^(?:Rs\.?|INR|USD|EUR|GBP|US\$)\s*/i, "");
-  return `${fallbackSymbol}${numeric}`;
+  const withSymbol = detectCurrencyFromPrice(trimmed)
+    ? trimmed
+    : `${fallbackSymbol}${trimmed.replace(/^(?:Rs\.?|INR|USD|EUR|GBP|US\$)\s*/i, "")}`;
+  return stripTrailingZeros(withSymbol);
 }
