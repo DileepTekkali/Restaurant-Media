@@ -1176,7 +1176,7 @@ export const BannerStudio = ({
           {safeName}
         </h2>
         <p className="text-sm text-muted-foreground">
-          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · 3 themed formats · dish photography by{" "}
+          {cappedItems.length} dish{cappedItems.length === 1 ? "" : "es"} · {formatsToRender.length} themed format{formatsToRender.length === 1 ? "" : "s"} · dish photography by{" "}
           <a
             href="https://pollinations.ai"
             target="_blank"
