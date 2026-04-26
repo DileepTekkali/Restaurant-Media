@@ -582,11 +582,11 @@ function composeBanner({
     const labelTracking = 1.0;
     let labelSize = Math.round(H * 0.013);
     let priceSize = Math.round(H * 0.028);
-    const padX = 18;
+    const padX = 16;
     const padY = 12;
     const notch = 14;
     // Hard ceiling — tag must never exceed this fraction of canvas width.
-    const maxTagW = Math.round(W * 0.4);
+    const maxTagW = Math.round(W * 0.44);
     const usableMax = maxTagW - notch - padX * 2;
 
     // Shrink label font if needed (mainly relevant for narrow landscape).
@@ -600,7 +600,7 @@ function composeBanner({
 
     // Shrink price font until the price text fits within the tag's usable width.
     let priceW: number;
-    const minPriceSize = Math.max(12, Math.round(H * 0.016));
+    const minPriceSize = Math.max(10, Math.round(H * 0.014));
     while (true) {
       ctx.font = `800 ${priceSize}px ${SANS}`;
       priceW = ctx.measureText(priceText).width;
