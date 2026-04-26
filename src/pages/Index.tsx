@@ -138,7 +138,7 @@ const Index = () => {
               <ChefHat className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="text-lg font-bold tracking-tight text-foreground">
-              MenuCraft
+              MENU2MEDIA
             </span>
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex">
