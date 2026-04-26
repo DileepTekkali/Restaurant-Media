@@ -1112,6 +1112,7 @@ export const BannerStudio = ({
             variant="outline"
             size="sm"
             className="gap-2"
+            disabled={activeFormats.size === 0}
           >
             <RefreshCw className="h-4 w-4" />
             Regenerate
@@ -1120,6 +1121,50 @@ export const BannerStudio = ({
             <Download className="h-4 w-4" />
             Download all
           </Button>
+        </div>
+      </div>
+
+      {/* Format selector — only generate the sizes you need */}
+      <div className="mb-6 rounded-2xl border border-border bg-card/60 p-4 shadow-soft">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="flex flex-col gap-0.5">
+            <p className="text-sm font-semibold text-foreground">Choose banner sizes</p>
+            <p className="text-xs text-muted-foreground">
+              Pick 1–3 formats. Only selected sizes will be generated.
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-3">
+            {FORMATS.map((f) => {
+              const id = `fmt-${f.key}`;
+              const checked = selectedFormats.has(f.key);
+              return (
+                <Label
+                  key={f.key}
+                  htmlFor={id}
+                  className={`flex cursor-pointer items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                    checked
+                      ? "border-primary/40 bg-primary/10 text-foreground"
+                      : "border-border bg-background text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <Checkbox
+                    id={id}
+                    checked={checked}
+                    onCheckedChange={() => toggleFormat(f.key)}
+                  />
+                  <span>{f.label}</span>
+                </Label>
+              );
+            })}
+            <Button
+              size="sm"
+              onClick={applySelection}
+              disabled={!selectionDirty || selectedFormats.size === 0}
+              className="gap-2"
+            >
+              Apply
+            </Button>
+          </div>
         </div>
       </div>
 
