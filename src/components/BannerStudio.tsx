@@ -663,23 +663,28 @@ function composeBanner({
   /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
   const padX = m + Math.round(W * 0.02);
   const innerW = W - padX * 2;
-  let y = contentTop + Math.round(contentH * 0.12);
+
+  // Reserve space at bottom for the footer eyebrow + safe inner border so the
+  // description never collides with the footer or touches the yellow hairline.
+  const footerReserveTop = Math.round(H * 0.075);
+  const safeBottom = H - m - footerReserveTop - Math.round(H * 0.018);
+
+  let y = contentTop + Math.round(contentH * 0.1);
 
   if (hero) {
     // Dish title — dynamically sized so long names always fit on 1-2 lines
     // without overflowing the safe inner width.
     const baseTitleSize =
       format.key === "story"
-        ? Math.round(H * 0.052)
+        ? Math.round(H * 0.05)
         : format.key === "landscape"
-          ? Math.round(H * 0.072)
-          : Math.round(H * 0.064);
+          ? Math.round(H * 0.07)
+          : Math.round(H * 0.058);
     const minTitleSize = Math.round(baseTitleSize * 0.55);
     const titleMaxLines = format.key === "landscape" ? 1 : 2;
 
     let titleSize = baseTitleSize;
     let titleLines: string[] = [];
-    // Shrink until the longest wrapped line fits AND we don't need ellipsis.
     while (titleSize >= minTitleSize) {
       ctx.font = `700 ${titleSize}px ${SERIF}`;
       titleLines = wrapText(ctx, hero.item.name, innerW, titleMaxLines);
@@ -699,7 +704,8 @@ function composeBanner({
       ctx.fillText(line, W / 2, y + (i + 1) * titleSize * 0.95);
     });
     ctx.restore();
-    y += measureWrappedHeight(titleLines.length, titleSize, 0.95) + Math.round(H * 0.02);
+    const titleBottom = y + measureWrappedHeight(titleLines.length, titleSize, 0.95);
+    y = titleBottom + Math.round(H * 0.025);
 
     // AI-crafted marketing copy (Groq) takes priority, falls back to scraped description.
     const copyText =
@@ -707,31 +713,43 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
-      // Reserve space for the footer badge AND the inner border so the description
-      // never collides with "AVAILABLE TODAY" or touches the yellow hairline.
-      const footerReserve = Math.round(H * 0.085);
-      const safeBottom = H - m - footerReserve - Math.round(H * 0.02);
-
-      // Dynamically shrink description size and line count to fit the available
-      // vertical space without overflowing into the footer badge.
+      // Landscape gets a more readable description size — text band is short
+      // horizontally but still needs to feel professional, not tiny.
+      const baseDescSize =
+        format.key === "landscape"
+          ? Math.round(H * 0.038)
+          : format.key === "story"
+            ? Math.round(H * 0.024)
+            : Math.round(H * 0.026);
+      const minDescSize =
+        format.key === "landscape"
+          ? Math.round(H * 0.026)
+          : Math.round(H * 0.018);
       const maxDescLines = format.key === "landscape" ? 2 : 3;
-      const minDescSize = Math.round(H * 0.014);
-      let descSize = Math.round(H * 0.022);
+
+      // Available vertical room between title and footer-safe zone.
+      const availableH = safeBottom - y;
+
+      let descSize = baseDescSize;
       let descLines: string[] = [];
       let descBlockH = 0;
       while (descSize >= minDescSize) {
         ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-        descLines = wrapText(ctx, copyText, innerW - 60, maxDescLines);
+        descLines = wrapText(ctx, copyText, innerW - 40, maxDescLines);
         descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
-        if (y + descBlockH <= safeBottom) break;
+        if (descBlockH <= availableH) break;
         descSize -= 1;
       }
 
-      // If still too tall, push it up so the bottom edge sits at safeBottom.
-      let descTop = y;
-      if (descTop + descBlockH > safeBottom) {
-        descTop = Math.max(contentTop + 8, safeBottom - descBlockH);
+      // Anchor description to start strictly below the title (no overlap).
+      // If it still doesn't fit, drop a line and reflow rather than push up.
+      if (descBlockH > availableH && descLines.length > 1) {
+        ctx.font = `italic 500 ${descSize}px ${SERIF}`;
+        descLines = wrapText(ctx, copyText, innerW - 40, Math.max(1, maxDescLines - 1));
+        descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
       }
+
+      const descTop = y; // never push above title bottom
 
       ctx.save();
       ctx.shadowColor = "rgba(0,0,0,0.6)";
