@@ -720,19 +720,23 @@ function composeBanner({
       (hero.item.description && hero.item.description.trim()) ||
       "";
     if (copyText) {
-      // Landscape gets a more readable description size — text band is short
-      // horizontally but still needs to feel professional, not tiny.
+      // Format-tuned base sizes:
+      // • Landscape (1600×900) — band is short vertically; use a generous % of width-relative height for clear reading.
+      // • Story (1080×1920) — tall canvas; description must NOT dominate. Keep modest.
+      // • Square (1080×1080) — balanced.
       const baseDescSize =
         format.key === "landscape"
-          ? Math.round(H * 0.038)
+          ? Math.round(H * 0.046)
           : format.key === "story"
-            ? Math.round(H * 0.024)
-            : Math.round(H * 0.026);
+            ? Math.round(H * 0.018)
+            : Math.round(H * 0.024);
       const minDescSize =
         format.key === "landscape"
-          ? Math.round(H * 0.026)
-          : Math.round(H * 0.018);
-      const maxDescLines = format.key === "landscape" ? 2 : 3;
+          ? Math.round(H * 0.03)
+          : format.key === "story"
+            ? Math.round(H * 0.013)
+            : Math.round(H * 0.016);
+      const maxDescLines = format.key === "landscape" ? 2 : format.key === "story" ? 4 : 3;
 
       // Available vertical room between title and footer-safe zone.
       const availableH = safeBottom - y;
@@ -748,11 +752,10 @@ function composeBanner({
         descSize -= 1;
       }
 
-      // Anchor description to start strictly below the title (no overlap).
-      // If it still doesn't fit, drop a line and reflow rather than push up.
+      // If still overflowing at min size, drop a line and reflow rather than push up.
       if (descBlockH > availableH && descLines.length > 1) {
         ctx.font = `italic 500 ${descSize}px ${SERIF}`;
-        descLines = wrapText(ctx, copyText, innerW - 40, Math.max(1, maxDescLines - 1));
+        descLines = wrapText(ctx, copyText, innerW - 40, Math.max(1, descLines.length - 1));
         descBlockH = measureWrappedHeight(descLines.length, descSize, 1.35);
       }
 
