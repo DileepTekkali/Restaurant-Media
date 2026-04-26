@@ -768,9 +768,8 @@ function composeBanner({
 
   /* ──── 8) Companion dishes (chips with dividers) ──── */
   const companions = dishes.slice(1);
-  const footerReserve = Math.round(H * 0.085); // reserve space for footer badge
-  const companionsTop = y + Math.round(H * 0.015);
-  const companionsAvailable = H - m - footerReserve - companionsTop;
+  const companionsTop = y + Math.round(H * 0.012);
+  const companionsAvailable = safeBottom - companionsTop;
 
   if (companions.length > 0 && companionsAvailable > Math.round(H * 0.08)) {
     // "ALSO FEATURING" eyebrow
@@ -819,25 +818,50 @@ function composeBanner({
     });
   }
 
-  /* ──── 9) Footer: just the campaign badge (no website URL) ──── */
+  /* ──── 9) Footer: editorial campaign mark (no solid pill) ──── */
   if (theme.footerBadge) {
     const badgeFont = Math.round(H * 0.014);
+    const tracking = Math.round(H * 0.004);
     ctx.font = `700 ${badgeFont}px ${SANS}`;
-    const tw = ctx.measureText(theme.footerBadge).width;
-    const bpadX = 16;
-    const bpadY = 7;
-    const bw = tw + bpadX * 2;
-    const bh = badgeFont + bpadY * 2;
-    const bx = (W - bw) / 2;
-    const by = H - m - bh - Math.round(H * 0.018);
-    roundRect(ctx, bx, by, bw, bh, bh / 2);
+    const chars = theme.footerBadge.split("");
+    const textW =
+      chars.reduce((sum, c) => sum + ctx.measureText(c).width, 0) +
+      tracking * (chars.length - 1);
+    const cy = H - m - Math.round(H * 0.025);
+    const ruleGap = Math.round(W * 0.015);
+    const ruleLen = Math.round(W * 0.06);
+    const leftEnd = (W - textW) / 2 - ruleGap;
+    const rightStart = (W + textW) / 2 + ruleGap;
+
+    // Flanking hairline rules
+    ctx.save();
+    ctx.strokeStyle = `${theme.accent}cc`;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(leftEnd - ruleLen, cy);
+    ctx.lineTo(leftEnd, cy);
+    ctx.moveTo(rightStart, cy);
+    ctx.lineTo(rightStart + ruleLen, cy);
+    ctx.stroke();
+    // Tiny end-cap diamonds
     ctx.fillStyle = theme.accent;
-    ctx.fill();
-    ctx.fillStyle = theme.ink;
-    ctx.textAlign = "center";
+    [leftEnd - ruleLen, rightStart + ruleLen].forEach((px) => {
+      ctx.save();
+      ctx.translate(px, cy);
+      ctx.rotate(Math.PI / 4);
+      ctx.fillRect(-2.5, -2.5, 5, 5);
+      ctx.restore();
+    });
+    ctx.restore();
+
+    // Tracked label
+    ctx.save();
+    ctx.fillStyle = theme.accent;
+    ctx.font = `700 ${badgeFont}px ${SANS}`;
     ctx.textBaseline = "middle";
-    drawTrackedText(ctx, theme.footerBadge, bx + bw / 2, by + bh / 2 + 1, 1, "center");
+    drawTrackedText(ctx, theme.footerBadge, W / 2, cy, tracking, "center");
     ctx.textBaseline = "alphabetic";
+    ctx.restore();
   }
 
   return canvas;
