@@ -138,7 +138,7 @@ const Index = () => {
               <ChefHat className="h-5 w-5 text-primary-foreground" />
             </div>
             <span className="text-lg font-bold tracking-tight text-foreground">
-              MenuCraft
+              MENU2MEDIA
             </span>
           </div>
           <div className="hidden items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground sm:flex">
@@ -280,7 +280,7 @@ const Index = () => {
       )}
 
       <footer className="relative mt-12 border-t border-border/60 py-6 text-center text-xs text-muted-foreground">
-        Built with Lovable Cloud · Phase 2 — restaurant banner generator
+        MENU2MEDIA · Restaurant menus into ready-to-post banners
       </footer>
     </div>
   );
