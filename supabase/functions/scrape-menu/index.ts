@@ -38,6 +38,26 @@ interface RawCandidate {
   source: string;
 }
 
+interface DishImageHint {
+  /** Lower-cased, normalized dish name (used as lookup key). */
+  nameKey: string;
+  /** Original dish name as it appeared on the page. */
+  name: string;
+  /** Absolute, https-preferred image URL. */
+  imageUrl: string;
+}
+
+/** Normalize a dish name for fuzzy matching (lowercase, strip punctuation/extra spaces). */
+function normalizeDishName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeUrl(url: string): string {
   let u = url.trim();
   if (!/^https?:\/\//i.test(u)) u = "https://" + u;
@@ -365,8 +385,111 @@ function extractCandidates(html: string): {
 }
 
 /**
- * Fetch a binary asset (PDF / image) with a size cap. Returns null on error.
+ * Walk the page and try to associate <img> tags with the dish name they
+ * appear next to. We look inside common menu-item containers and use the
+ * heaviest text node (or alt text) as the dish name candidate. Result is a
+ * list of (dishName, imageUrl) hints — the LLM step later matches them to
+ * structured items by normalized name.
  */
+function extractDishImageHints(html: string, baseUrl: string): DishImageHint[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  if (!doc) return [];
+  const base = new URL(baseUrl);
+
+  const resolve = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const v = raw.trim();
+    if (!v || v.startsWith("data:")) return null;
+    try {
+      return new URL(v, base).toString();
+    } catch {
+      return null;
+    }
+  };
+
+  // Likely dish-card containers. We deliberately reuse the menu-item selectors
+  // so the harvest stays close to the same DOM regions as text candidates.
+  const containerSelectors = [
+    ".menu-item", ".menu_item", ".dish", ".food-item", "[data-menu-item]",
+    ".product-item", ".product",
+    ".menu li", ".menu > div", "ul.dishes > li",
+    "[class*='menu'] li", "[class*='menu'] article",
+    "[id*='menu'] li", "[id*='menu'] article",
+    "[class*='dish']", "[class*='food']",
+    ".item", ".card", "article", "figure",
+  ];
+
+  const hints: DishImageHint[] = [];
+  const seenKey = new Set<string>();
+
+  const pushHint = (rawName: string | null | undefined, rawSrc: string | null | undefined) => {
+    if (!rawName || !rawSrc) return;
+    const url = resolve(rawSrc);
+    if (!url) return;
+    if (!/\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(url)) return;
+    const name = rawName.replace(/\s+/g, " ").trim();
+    if (name.length < 2 || name.length > 120) return;
+    const key = normalizeDishName(name);
+    if (!key || seenKey.has(key)) return;
+    // Skip obvious non-food image names (logos, icons, hero banners).
+    const lowerSrc = url.toLowerCase();
+    if (/logo|favicon|sprite|icon[-_/.]/.test(lowerSrc)) return;
+    seenKey.add(key);
+    hints.push({ nameKey: key, name, imageUrl: url });
+  };
+
+  for (const sel of containerSelectors) {
+    let nodes: ArrayLike<Element>;
+    try {
+      nodes = doc.querySelectorAll(sel) as unknown as ArrayLike<Element>;
+    } catch {
+      continue;
+    }
+    Array.from(nodes).forEach((node: Element) => {
+      const img = node.querySelector("img");
+      if (!img) return;
+      const src =
+        img.getAttribute("src") ||
+        img.getAttribute("data-src") ||
+        img.getAttribute("data-lazy-src") ||
+        img.getAttribute("data-original") ||
+        "";
+      if (!src) return;
+
+      // Prefer a heading inside the container, then alt text, then the first
+      // non-trivial text node.
+      const headingEl =
+        node.querySelector("h1, h2, h3, h4, h5, h6, .title, [class*='title' i], [class*='name' i]");
+      let name = headingEl?.textContent?.replace(/\s+/g, " ").trim() || "";
+      if (!name) name = (img.getAttribute("alt") || "").trim();
+      if (!name) {
+        // First text fragment under ~80 chars
+        const txt = (node.textContent || "").replace(/\s+/g, " ").trim();
+        name = txt.split(/[•·|–—-]/)[0]?.trim().slice(0, 80) || "";
+      }
+      pushHint(name, src);
+    });
+    if (hints.length > 200) break;
+  }
+
+  // Fallback: any <img> with a meaningful alt that mentions food-ish words.
+  if (hints.length < 5) {
+    doc.querySelectorAll("img[alt]").forEach((node) => {
+      const img = node as Element;
+      const alt = (img.getAttribute("alt") || "").trim();
+      if (alt.length < 3 || alt.length > 120) return;
+      const src =
+        img.getAttribute("src") ||
+        img.getAttribute("data-src") ||
+        img.getAttribute("data-lazy-src") ||
+        "";
+      pushHint(alt, src);
+    });
+  }
+
+  return hints.slice(0, 200);
+}
+
 async function fetchBinary(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, {
@@ -468,6 +591,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   pagesFetched: string[];
   headings: string[];
   logoUrl: string | null;
+  dishImages: Map<string, string>;
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
@@ -476,6 +600,13 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const seenText = new Set<string>();
   const fullTextParts: string[] = [];
   const headingSet = new Set<string>();
+  const dishImages = new Map<string, string>();
+
+  const addImageHints = (hints: DishImageHint[]) => {
+    for (const h of hints) {
+      if (!dishImages.has(h.nameKey)) dishImages.set(h.nameKey, h.imageUrl);
+    }
+  };
 
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
@@ -493,6 +624,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   }
   for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
+  addImageHints(extractDishImageHints(entryHtml, entryUrl));
 
   const discovered = discoverMenuLinks(entryHtml, entryUrl);
   const subLinks = discovered.pages.filter((u) => !visited.has(u)).slice(0, 5);
@@ -528,6 +660,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     }
     for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+    addImageHints(extractDishImageHints(html, url));
   }
 
   // Fetch + extract text from menu PDFs
@@ -592,6 +725,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     pagesFetched,
     headings: [...headingSet].slice(0, 60),
     logoUrl,
+    dishImages,
   };
 }
 
@@ -800,8 +934,9 @@ Deno.serve(async (req) => {
 
     try {
       console.log("Gathering menu corpus for", url);
-      const { title, candidates, fullText, pagesFetched, headings, logoUrl } =
+      const { title, candidates, fullText, pagesFetched, headings, logoUrl, dishImages } =
         await gatherMenuCorpus(url);
+      console.log(`Harvested ${dishImages.size} dish image hints from page DOM`);
       console.log(`Detected logo: ${logoUrl ?? "(none)"}`);
       console.log(
         `Crawled ${pagesFetched.length} page(s): ${pagesFetched.join(", ")}`,
@@ -842,6 +977,21 @@ Deno.serve(async (req) => {
       }
 
       await supabase.from("menu_items").delete().eq("restaurant_id", restaurant.id);
+      // Match each parsed item to a scraped image by normalized dish name.
+      // Falls back to undefined → BannerStudio will then use Pollinations.
+      const findImageForItem = (name: string): string | null => {
+        const key = normalizeDishName(name);
+        if (!key) return null;
+        if (dishImages.has(key)) return dishImages.get(key)!;
+        // Loose fallback: any harvested key that contains, or is contained by,
+        // the dish name (handles "Margherita" vs "Margherita Pizza").
+        for (const [k, v] of dishImages.entries()) {
+          if (k.length < 4 || key.length < 4) continue;
+          if (k.includes(key) || key.includes(k)) return v;
+        }
+        return null;
+      };
+
       const { error: insertErr } = await supabase.from("menu_items").insert(
         items.map((i) => ({
           restaurant_id: restaurant.id,
@@ -849,6 +999,7 @@ Deno.serve(async (req) => {
           category: i.category,
           price: i.price,
           description: i.description,
+          image_url: findImageForItem(i.name),
         })),
       );
       if (insertErr) throw new Error(`Insert items failed: ${insertErr.message}`);

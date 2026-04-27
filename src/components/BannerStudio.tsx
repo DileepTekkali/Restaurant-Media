@@ -972,6 +972,25 @@ export const BannerStudio = ({
 
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
+            // 1) Prefer the dish photo we scraped from the restaurant's site.
+            //    Route through weserv to dodge CORS / hotlink protection so
+            //    the canvas stays exportable.
+            if (item.image_url) {
+              const stripped = item.image_url.replace(/^https?:\/\//, "");
+              const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(stripped)}&w=1280&h=1280&fit=cover&output=jpg`;
+              try {
+                const img = await loadImage(proxied);
+                return { item, img };
+              } catch {
+                try {
+                  const img = await loadImage(item.image_url);
+                  return { item, img };
+                } catch {
+                  /* fall through to Pollinations */
+                }
+              }
+            }
+            // 2) No scraped image (or it failed) → generate via Pollinations.
             const url = pollinationsUrl(item, 1280, 1280, theme, generationKey);
             try {
               const img = await loadImage(url);
