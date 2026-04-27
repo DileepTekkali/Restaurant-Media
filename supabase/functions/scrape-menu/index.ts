@@ -385,8 +385,111 @@ function extractCandidates(html: string): {
 }
 
 /**
- * Fetch a binary asset (PDF / image) with a size cap. Returns null on error.
+ * Walk the page and try to associate <img> tags with the dish name they
+ * appear next to. We look inside common menu-item containers and use the
+ * heaviest text node (or alt text) as the dish name candidate. Result is a
+ * list of (dishName, imageUrl) hints — the LLM step later matches them to
+ * structured items by normalized name.
  */
+function extractDishImageHints(html: string, baseUrl: string): DishImageHint[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  if (!doc) return [];
+  const base = new URL(baseUrl);
+
+  const resolve = (raw: string | null | undefined): string | null => {
+    if (!raw) return null;
+    const v = raw.trim();
+    if (!v || v.startsWith("data:")) return null;
+    try {
+      return new URL(v, base).toString();
+    } catch {
+      return null;
+    }
+  };
+
+  // Likely dish-card containers. We deliberately reuse the menu-item selectors
+  // so the harvest stays close to the same DOM regions as text candidates.
+  const containerSelectors = [
+    ".menu-item", ".menu_item", ".dish", ".food-item", "[data-menu-item]",
+    ".product-item", ".product",
+    ".menu li", ".menu > div", "ul.dishes > li",
+    "[class*='menu'] li", "[class*='menu'] article",
+    "[id*='menu'] li", "[id*='menu'] article",
+    "[class*='dish']", "[class*='food']",
+    ".item", ".card", "article", "figure",
+  ];
+
+  const hints: DishImageHint[] = [];
+  const seenKey = new Set<string>();
+
+  const pushHint = (rawName: string | null | undefined, rawSrc: string | null | undefined) => {
+    if (!rawName || !rawSrc) return;
+    const url = resolve(rawSrc);
+    if (!url) return;
+    if (!/\.(jpe?g|png|webp|gif|avif)(\?|#|$)/i.test(url)) return;
+    const name = rawName.replace(/\s+/g, " ").trim();
+    if (name.length < 2 || name.length > 120) return;
+    const key = normalizeDishName(name);
+    if (!key || seenKey.has(key)) return;
+    // Skip obvious non-food image names (logos, icons, hero banners).
+    const lowerSrc = url.toLowerCase();
+    if (/logo|favicon|sprite|icon[-_/.]/.test(lowerSrc)) return;
+    seenKey.add(key);
+    hints.push({ nameKey: key, name, imageUrl: url });
+  };
+
+  for (const sel of containerSelectors) {
+    let nodes: ArrayLike<Element>;
+    try {
+      nodes = doc.querySelectorAll(sel) as unknown as ArrayLike<Element>;
+    } catch {
+      continue;
+    }
+    Array.from(nodes).forEach((node: Element) => {
+      const img = node.querySelector("img");
+      if (!img) return;
+      const src =
+        img.getAttribute("src") ||
+        img.getAttribute("data-src") ||
+        img.getAttribute("data-lazy-src") ||
+        img.getAttribute("data-original") ||
+        "";
+      if (!src) return;
+
+      // Prefer a heading inside the container, then alt text, then the first
+      // non-trivial text node.
+      const headingEl =
+        node.querySelector("h1, h2, h3, h4, h5, h6, .title, [class*='title' i], [class*='name' i]");
+      let name = headingEl?.textContent?.replace(/\s+/g, " ").trim() || "";
+      if (!name) name = (img.getAttribute("alt") || "").trim();
+      if (!name) {
+        // First text fragment under ~80 chars
+        const txt = (node.textContent || "").replace(/\s+/g, " ").trim();
+        name = txt.split(/[•·|–—-]/)[0]?.trim().slice(0, 80) || "";
+      }
+      pushHint(name, src);
+    });
+    if (hints.length > 200) break;
+  }
+
+  // Fallback: any <img> with a meaningful alt that mentions food-ish words.
+  if (hints.length < 5) {
+    doc.querySelectorAll("img[alt]").forEach((node) => {
+      const img = node as Element;
+      const alt = (img.getAttribute("alt") || "").trim();
+      if (alt.length < 3 || alt.length > 120) return;
+      const src =
+        img.getAttribute("src") ||
+        img.getAttribute("data-src") ||
+        img.getAttribute("data-lazy-src") ||
+        "";
+      pushHint(alt, src);
+    });
+  }
+
+  return hints.slice(0, 200);
+}
+
 async function fetchBinary(url: string): Promise<Uint8Array | null> {
   try {
     const res = await fetch(url, {
