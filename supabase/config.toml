@@ -1,7 +1,10 @@
-project_id = "lgxzbibuxbzzmennjwkk"
+project_id = "wbienkprqbmrniapkguq"
 
 [functions.scrape-menu]
 verify_jwt = false
 
 [functions.dish-copy]
+verify_jwt = false
+
+[functions.generate-image]
 verify_jwt = false

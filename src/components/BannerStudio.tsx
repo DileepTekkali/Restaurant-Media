@@ -73,41 +73,117 @@ async function ensureFontsLoaded(): Promise<void> {
 const SERIF = "'Playfair Display', Georgia, 'Times New Roman', serif";
 const SANS = "'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif";
 
-/* ────────────── Pollinations dish photography ────────────── */
-
-function pollinationsUrl(item: MenuItem, w: number, h: number, theme: CampaignTheme, salt: number): string {
-  const parts = [
-    "professional food photography of",
-    item.name,
-    item.description ? `, ${item.description}` : "",
-    `, ${theme.photoStyle}`,
-    ", restaurant menu hero shot, 45-degree angle, shallow depth of field, magazine quality, high detail, appetizing",
-  ];
-  const prompt = parts.join(" ").slice(0, 420);
-  const baseSeed = Math.abs(
-    [...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0),
-  );
-  const seed = (baseSeed + salt) % 9_999_999;
-  const params = new URLSearchParams({
-    width: String(w),
-    height: String(h),
-    seed: String(seed),
-    nologo: "true",
-    enhance: "true",
-    model: "flux",
+/* ────────────── Fallback image generator ────────────── */
+function createFallbackImage(item: MenuItem, theme: CampaignTheme): Promise<{ item: MenuItem; img: HTMLImageElement }> {
+  return new Promise((resolve) => {
+    const canvas = document.createElement('canvas');
+    canvas.width = 1280;
+    canvas.height = 1280;
+    const ctx = canvas.getContext('2d')!;
+    
+    // Multi-color gradient background
+    const grad = ctx.createLinearGradient(0, 0, 1280, 1280);
+    grad.addColorStop(0, theme.ink);
+    grad.addColorStop(0.5, theme.accent);
+    grad.addColorStop(1, theme.accentSoft);
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 1280, 1280);
+    
+    // Add animated-looking diagonal pattern
+    ctx.strokeStyle = 'rgba(255,255,255,0.08)';
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 40; i++) {
+      ctx.beginPath();
+      ctx.moveTo(i * 64, 0);
+      ctx.lineTo(i * 64 + 1280, 1280);
+      ctx.stroke();
+    }
+    
+    // Dark semi-transparent overlay for text readability
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.fillRect(0, 0, 1280, 1280);
+    
+    // Add decorative circles
+    ctx.fillStyle = 'rgba(255,255,255,0.05)';
+    for (let i = 0; i < 3; i++) {
+      ctx.beginPath();
+      ctx.arc(640 + (i - 1) * 300, 640, 200 + i * 100, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    
+    // Dish name
+    ctx.fillStyle = theme.cream;
+    ctx.font = "bold 80px Georgia, serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.shadowColor = 'rgba(0,0,0,0.5)';
+    ctx.shadowBlur = 20;
+    ctx.shadowOffsetY = 4;
+    
+    // Wrap long names
+    const words = item.name.split(' ');
+    const maxWordsPerLine = Math.ceil(words.length / 2);
+    const lines: string[] = [];
+    let currentLine = '';
+    words.forEach((word, idx) => {
+      if (lines.length < 2) {
+        if (currentLine && idx > 0 && idx % maxWordsPerLine === 0) {
+          lines.push(currentLine);
+          currentLine = word;
+        } else {
+          currentLine = currentLine ? currentLine + ' ' + word : word;
+        }
+      }
+    });
+    if (currentLine) lines.push(currentLine);
+    
+    const lineHeight = 120;
+    const startY = 640 - (lines.length - 1) * lineHeight / 2;
+    lines.forEach((line, idx) => {
+      ctx.fillText(line, 640, startY + idx * lineHeight);
+    });
+    
+    // Price or cuisine hint (smaller text)
+    if (item.price) {
+      ctx.font = "50px Inter, sans-serif";
+      ctx.fillStyle = theme.accentSoft;
+      const currency = item.price > 500 ? '₹' : '$';
+      ctx.fillText(`${currency}${item.price}`, 640, 1000);
+    }
+    
+    const img = new Image();
+    img.onload = () => {
+      console.log('[Pollinations] Using fallback gradient for:', item.name);
+      resolve({ item, img });
+    };
+    img.src = canvas.toDataURL('image/png');
   });
-  return `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?${params.toString()}`;
 }
 
-function loadImage(src: string): Promise<HTMLImageElement> {
+function loadImage(src: string, timeout = 30000): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = "anonymous";
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error(`Failed to load ${src}`));
+    
+    const timeoutId = setTimeout(() => {
+      img.src = '';
+      reject(new Error(`Timeout loading image`));
+    }, timeout);
+    
+    img.onload = () => {
+      clearTimeout(timeoutId);
+      console.log('[loadImage] Loaded:', src.substring(0, 80), 'Size:', img.width, 'x', img.height);
+      resolve(img);
+    };
+    img.onerror = () => {
+      clearTimeout(timeoutId);
+      console.error('[loadImage] Failed:', src.substring(0, 80));
+      reject(new Error(`Failed to load ${src}`));
+    };
     img.src = src;
   });
 }
+
 
 /* ────────────── Currency helpers (shared) ────────────── */
 import { detectMenuCurrency, formatPriceWithCurrency } from "@/lib/currency";
@@ -990,17 +1066,75 @@ export const BannerStudio = ({
                 }
               }
             }
-            // 2) No scraped image (or it failed) → generate via Pollinations.
-            const url = pollinationsUrl(item, 1280, 1280, theme, generationKey);
-            try {
-              const img = await loadImage(url);
-              return { item, img };
-            } catch {
-              const img = await loadImage(
-                "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
-              );
-              return { item, img };
+            // 2) No scraped image (or it failed) → generate via Pollinations through Supabase function.
+            const parts = [
+              "professional food photography of",
+              item.name,
+              item.description ? `, ${item.description}` : "",
+              `, ${theme.photoStyle}`,
+              ", restaurant menu hero shot, 45-degree angle, shallow depth of field, magazine quality, high detail, appetizing",
+            ];
+            const prompt = parts.join(" ").slice(0, 420);
+            const baseSeed = Math.abs(
+              [...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0),
+            );
+            const seed = (baseSeed + generationKey) % 9_999_999;
+            
+            console.log('[Pollinations] Generating for:', item.name);
+            console.log('[Pollinations] Prompt:', prompt);
+            
+            // Try using Supabase Edge Function for image generation
+            for (let attempt = 1; attempt <= 2; attempt++) {
+              try {
+                console.log('[Pollinations] Attempt', attempt, '- using Supabase Edge Function');
+                const response = await fetch(
+                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`,
+                  {
+                    method: 'POST',
+                    headers: {
+                      'Content-Type': 'application/json',
+                      'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
+                    },
+                    body: JSON.stringify({
+                      prompt,
+                      width: 1280,
+                      height: 1280,
+                      seed,
+                      model: "flux",
+                      nologo: true,
+                      enhance: true,
+                    }),
+                  }
+                );
+                
+                if (!response.ok) {
+                  throw new Error(`HTTP error: ${response.status}`);
+                }
+                
+                const contentType = response.headers.get('content-type') || 'image/jpeg';
+                const blob = await response.blob();
+                const objectUrl = URL.createObjectURL(blob);
+                
+                return new Promise<{ item: MenuItem; img: HTMLImageElement }>((resolve, reject) => {
+                  const img = new Image();
+                  img.crossOrigin = "anonymous";
+                  img.onload = () => {
+                    console.log('[Pollinations] Loaded:', item.name, 'Size:', img.width, 'x', img.height);
+                    resolve({ item, img });
+                  };
+                  img.onerror = () => reject(new Error(`Failed to load image`));
+                  img.src = objectUrl;
+                });
+              } catch (e) {
+                console.log('[Pollinations] Attempt', attempt, 'failed:', e instanceof Error ? e.message : 'error');
+                if (attempt === 2) {
+                  // Last attempt failed, use fallback gradient
+                  console.log('[Pollinations] All attempts failed, using gradient fallback for:', item.name);
+                  return createFallbackImage(item, theme);
+                }
+              }
             }
+            throw new Error('All attempts failed');
           }),
         );
         if (cancelRef.current) return;
