@@ -38,6 +38,26 @@ interface RawCandidate {
   source: string;
 }
 
+interface DishImageHint {
+  /** Lower-cased, normalized dish name (used as lookup key). */
+  nameKey: string;
+  /** Original dish name as it appeared on the page. */
+  name: string;
+  /** Absolute, https-preferred image URL. */
+  imageUrl: string;
+}
+
+/** Normalize a dish name for fuzzy matching (lowercase, strip punctuation/extra spaces). */
+function normalizeDishName(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 function normalizeUrl(url: string): string {
   let u = url.trim();
   if (!/^https?:\/\//i.test(u)) u = "https://" + u;
