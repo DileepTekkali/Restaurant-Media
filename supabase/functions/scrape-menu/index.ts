@@ -545,7 +545,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     pagesFetched.push(url);
     fullTextParts.push(`--- PDF ${url} ---\n${text}`);
     // Treat each non-empty line as a candidate row.
-    text.split(/\r?\n/).forEach((line) => {
+    text.split(/\r?\n/).forEach((line: string) => {
       const t = line.replace(/\s+/g, " ").trim();
       if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
         seenText.add(t);
@@ -573,7 +573,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
       visited.add(url);
       pagesFetched.push(url);
       fullTextParts.push(`--- IMAGE ${url} ---\n${text}`);
-      text.split(/\r?\n/).forEach((line) => {
+      text.split(/\r?\n/).forEach((line: string) => {
         const t = line.replace(/\s+/g, " ").trim();
         if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
           seenText.add(t);
