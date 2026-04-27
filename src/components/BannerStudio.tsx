@@ -899,16 +899,18 @@ export const BannerStudio = ({
   onBack,
 }: BannerStudioProps) => {
   const { toast } = useToast();
+  // Start with nothing selected/active so we never generate banners
+  // until the user explicitly picks formats and clicks "Generate".
   const [selectedFormats, setSelectedFormats] = useState<Set<FormatKey>>(
-    new Set<FormatKey>(["square", "story", "landscape"]),
+    new Set<FormatKey>(),
   );
   const [activeFormats, setActiveFormats] = useState<Set<FormatKey>>(
-    new Set<FormatKey>(["square", "story", "landscape"]),
+    new Set<FormatKey>(),
   );
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
-    square: { url: null, loading: true, error: null },
-    story: { url: null, loading: true, error: null },
-    landscape: { url: null, loading: true, error: null },
+    square: { url: null, loading: false, error: null },
+    story: { url: null, loading: false, error: null },
+    landscape: { url: null, loading: false, error: null },
   });
   const [generationKey, setGenerationKey] = useState(0);
   const cancelRef = useRef(false);
@@ -1159,10 +1161,10 @@ export const BannerStudio = ({
             <Button
               size="sm"
               onClick={applySelection}
-              disabled={!selectionDirty || selectedFormats.size === 0}
+              disabled={selectedFormats.size === 0 || (!selectionDirty && activeFormats.size > 0)}
               className="gap-2"
             >
-              Apply
+              {activeFormats.size === 0 ? "Generate" : "Apply"}
             </Button>
           </div>
         </div>
@@ -1195,7 +1197,7 @@ export const BannerStudio = ({
 
       {formatsToRender.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-10 text-center text-sm text-muted-foreground">
-          Select at least one banner size above and tap Apply to generate.
+          Pick the banner sizes you need above and tap <span className="font-semibold text-foreground">Generate</span>. We'll only render what you select — no wasted images.
         </div>
       ) : (
       <Tabs defaultValue={formatsToRender[0].key} key={activeFormatsKey} className="w-full">
