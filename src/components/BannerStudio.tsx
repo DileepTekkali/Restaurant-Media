@@ -1161,10 +1161,10 @@ export const BannerStudio = ({
             <Button
               size="sm"
               onClick={applySelection}
-              disabled={!selectionDirty || selectedFormats.size === 0}
+              disabled={selectedFormats.size === 0 || (!selectionDirty && activeFormats.size > 0)}
               className="gap-2"
             >
-              Apply
+              {activeFormats.size === 0 ? "Generate" : "Apply"}
             </Button>
           </div>
         </div>
