@@ -725,6 +725,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     pagesFetched,
     headings: [...headingSet].slice(0, 60),
     logoUrl,
+    dishImages,
   };
 }
 
