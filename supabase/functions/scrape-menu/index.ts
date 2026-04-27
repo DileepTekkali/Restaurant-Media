@@ -9,6 +9,12 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+import { extractText, getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const PDF_EXT = /\.pdf(\?|#|$)/i;
+const IMG_EXT = /\.(jpe?g|png|webp)(\?|#|$)/i;
+const MAX_BINARY_BYTES = 12 * 1024 * 1024; // 12MB cap per file
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -155,12 +161,18 @@ function findLogoUrl(html: string, baseUrl: string): string | null {
   return resolve("/favicon.ico");
 }
 
-function discoverMenuLinks(html: string, baseUrl: string): string[] {
+function discoverMenuLinks(html: string, baseUrl: string): {
+  pages: string[];
+  pdfs: string[];
+  images: string[];
+} {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  if (!doc) return [];
+  if (!doc) return { pages: [], pdfs: [], images: [] };
 
   const base = new URL(baseUrl);
-  const found = new Map<string, number>(); // url -> score
+  const pageScores = new Map<string, number>();
+  const pdfScores = new Map<string, number>();
+  const imageScores = new Map<string, number>();
 
   doc.querySelectorAll("a[href]").forEach((node) => {
     const a = node as Element;
@@ -176,12 +188,7 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
       return;
     }
 
-    // Same-host only — don't wander off to social media etc.
     if (resolved.hostname !== base.hostname) return;
-    // Skip obvious non-HTML assets.
-    if (/\.(pdf|jpe?g|png|gif|svg|webp|mp4|zip|doc|docx)$/i.test(resolved.pathname)) {
-      return;
-    }
 
     const haystack = (
       (a.textContent || "") + " " + resolved.pathname + " " + (a.getAttribute("title") || "")
@@ -191,16 +198,54 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
     for (const kw of MENU_LINK_KEYWORDS) {
       if (haystack.includes(kw)) score += kw === "menu" ? 3 : 1;
     }
+    if (score === 0) return;
 
-    if (score > 0) {
-      const key = resolved.origin + resolved.pathname;
-      found.set(key, Math.max(found.get(key) ?? 0, score));
+    const key = resolved.origin + resolved.pathname + resolved.search;
+    if (PDF_EXT.test(resolved.pathname)) {
+      pdfScores.set(key, Math.max(pdfScores.get(key) ?? 0, score + 2));
+    } else if (IMG_EXT.test(resolved.pathname)) {
+      imageScores.set(key, Math.max(imageScores.get(key) ?? 0, score + 1));
+    } else if (!/\.(gif|svg|mp4|zip|doc|docx)$/i.test(resolved.pathname)) {
+      const k = resolved.origin + resolved.pathname;
+      pageScores.set(k, Math.max(pageScores.get(k) ?? 0, score));
     }
   });
 
-  return [...found.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([url]) => url);
+  // Also pick up <img> tags whose alt/src/class strongly suggest a menu board image.
+  doc.querySelectorAll("img").forEach((node) => {
+    const img = node as Element;
+    const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
+    if (!src) return;
+    let resolved: URL;
+    try {
+      resolved = new URL(src, base);
+    } catch {
+      return;
+    }
+    if (!IMG_EXT.test(resolved.pathname)) return;
+    const haystack = (
+      (img.getAttribute("alt") || "") + " " +
+      (img.getAttribute("class") || "") + " " +
+      (img.getAttribute("id") || "") + " " +
+      resolved.pathname
+    ).toLowerCase();
+    let score = 0;
+    if (haystack.includes("menu")) score += 4;
+    if (haystack.includes("food") || haystack.includes("dish")) score += 1;
+    if (score >= 4) {
+      const key = resolved.origin + resolved.pathname + resolved.search;
+      imageScores.set(key, Math.max(imageScores.get(key) ?? 0, score));
+    }
+  });
+
+  const sortDesc = (m: Map<string, number>) =>
+    [...m.entries()].sort((a, b) => b[1] - a[1]).map(([u]) => u);
+
+  return {
+    pages: sortDesc(pageScores),
+    pdfs: sortDesc(pdfScores),
+    images: sortDesc(imageScores),
+  };
 }
 
 // Headings that are clearly NOT food categories.
@@ -320,6 +365,98 @@ function extractCandidates(html: string): {
 }
 
 /**
+ * Fetch a binary asset (PDF / image) with a size cap. Returns null on error.
+ */
+async function fetchBinary(url: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const len = Number(res.headers.get("content-length") || 0);
+    if (len && len > MAX_BINARY_BYTES) {
+      console.warn(`Skipping ${url} — too large (${len} bytes)`);
+      return null;
+    }
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > MAX_BINARY_BYTES) return null;
+    return buf;
+  } catch (e) {
+    console.warn(`Binary fetch failed for ${url}:`, e);
+    return null;
+  }
+}
+
+/** Extract text from a PDF menu (first ~10 pages). Returns "" on failure. */
+async function extractPdfText(url: string): Promise<string> {
+  const bytes = await fetchBinary(url);
+  if (!bytes) return "";
+  try {
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    return (Array.isArray(text) ? text.join("\n") : String(text || ""))
+      .replace(/\u0000/g, "")
+      .slice(0, 16000);
+  } catch (e) {
+    console.warn(`PDF parse failed for ${url}:`, e);
+    return "";
+  }
+}
+
+/**
+ * Use Groq's vision model to OCR a menu image and return raw text lines
+ * (dish · price · description), one per line. Returns "" on failure.
+ */
+async function extractImageMenuText(url: string, groqKey: string): Promise<string> {
+  // Pass URL directly to the vision model — Groq fetches it server-side.
+  const body = {
+    model: GROQ_VISION_MODEL,
+    temperature: 0.1,
+    max_tokens: 2048,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "This image is a restaurant menu. Transcribe every dish exactly as printed. " +
+              "Output ONE item per line in the format: `<Category> | <Dish Name> | <Price or -> | <Short description or ->`. " +
+              "Use the menu's own section headings as Category. Skip headers, footers, addresses, hours, marketing copy. " +
+              "Preserve currency symbols. No commentary, no markdown — just the lines.",
+          },
+          { type: "image_url", image_url: { url } },
+        ],
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${groqKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      console.warn(`Vision OCR HTTP ${res.status} for ${url}:`, (await res.text()).slice(0, 200));
+      return "";
+    }
+    const data = await res.json();
+    return (data?.choices?.[0]?.message?.content || "").toString().slice(0, 16000);
+  } catch (e) {
+    console.warn(`Vision OCR threw for ${url}:`, e);
+    return "";
+  }
+}
+
+/**
  * Crawl the entry URL plus up to N menu-related sub-pages and merge their
  * extracted candidates + full text. Title is taken from the first page that
  * has one.
@@ -357,14 +494,17 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
 
-  const subLinks = discoverMenuLinks(entryHtml, entryUrl)
-    .filter((u) => !visited.has(u))
-    .slice(0, 5);
+  const discovered = discoverMenuLinks(entryHtml, entryUrl);
+  const subLinks = discovered.pages.filter((u) => !visited.has(u)).slice(0, 5);
+  const pdfLinks = discovered.pdfs.filter((u) => !visited.has(u)).slice(0, 3);
+  const imageLinks = discovered.images.filter((u) => !visited.has(u)).slice(0, 3);
 
-  console.log(`Discovered ${subLinks.length} menu-like sub-pages`);
+  console.log(
+    `Discovered ${subLinks.length} HTML sub-pages, ${pdfLinks.length} PDF(s), ${imageLinks.length} image(s)`,
+  );
 
   const subResults = await Promise.allSettled(
-    subLinks.map(async (url) => {
+    subLinks.map(async (url: string) => {
       const html = await fetchHtml(url);
       return { url, html };
     }),
@@ -388,6 +528,59 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     }
     for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+  }
+
+  // Fetch + extract text from menu PDFs
+  const pdfResults = await Promise.allSettled(
+    pdfLinks.map(async (url: string) => ({ url, text: await extractPdfText(url) })),
+  );
+  for (const r of pdfResults) {
+    if (r.status !== "fulfilled") {
+      console.warn("PDF fetch/parse failed:", r.reason);
+      continue;
+    }
+    const { url, text } = r.value;
+    if (!text) continue;
+    visited.add(url);
+    pagesFetched.push(url);
+    fullTextParts.push(`--- PDF ${url} ---\n${text}`);
+    // Treat each non-empty line as a candidate row.
+    text.split(/\r?\n/).forEach((line: string) => {
+      const t = line.replace(/\s+/g, " ").trim();
+      if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
+        seenText.add(t);
+        allCandidates.push({ text: t, source: "pdf" });
+      }
+    });
+  }
+
+  // Fetch + OCR menu images via Groq vision
+  const groqKeyForVision = Deno.env.get("GROQ_API_KEY");
+  if (groqKeyForVision && imageLinks.length > 0) {
+    const imgResults = await Promise.allSettled(
+      imageLinks.map(async (url: string) => ({
+        url,
+        text: await extractImageMenuText(url, groqKeyForVision),
+      })),
+    );
+    for (const r of imgResults) {
+      if (r.status !== "fulfilled") {
+        console.warn("Image OCR failed:", r.reason);
+        continue;
+      }
+      const { url, text } = r.value;
+      if (!text) continue;
+      visited.add(url);
+      pagesFetched.push(url);
+      fullTextParts.push(`--- IMAGE ${url} ---\n${text}`);
+      text.split(/\r?\n/).forEach((line: string) => {
+        const t = line.replace(/\s+/g, " ").trim();
+        if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
+          seenText.add(t);
+          allCandidates.push({ text: t, source: "image" });
+        }
+      });
+    }
   }
 
   const fullText = fullTextParts.join("\n\n").slice(0, 20000);
