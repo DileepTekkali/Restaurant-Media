@@ -365,6 +365,98 @@ function extractCandidates(html: string): {
 }
 
 /**
+ * Fetch a binary asset (PDF / image) with a size cap. Returns null on error.
+ */
+async function fetchBinary(url: string): Promise<Uint8Array | null> {
+  try {
+    const res = await fetch(url, {
+      headers: {
+        "User-Agent":
+          "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+      },
+      redirect: "follow",
+    });
+    if (!res.ok) return null;
+    const len = Number(res.headers.get("content-length") || 0);
+    if (len && len > MAX_BINARY_BYTES) {
+      console.warn(`Skipping ${url} — too large (${len} bytes)`);
+      return null;
+    }
+    const buf = new Uint8Array(await res.arrayBuffer());
+    if (buf.byteLength > MAX_BINARY_BYTES) return null;
+    return buf;
+  } catch (e) {
+    console.warn(`Binary fetch failed for ${url}:`, e);
+    return null;
+  }
+}
+
+/** Extract text from a PDF menu (first ~10 pages). Returns "" on failure. */
+async function extractPdfText(url: string): Promise<string> {
+  const bytes = await fetchBinary(url);
+  if (!bytes) return "";
+  try {
+    const pdf = await getDocumentProxy(bytes);
+    const { text } = await extractText(pdf, { mergePages: true });
+    return (Array.isArray(text) ? text.join("\n") : String(text || ""))
+      .replace(/\u0000/g, "")
+      .slice(0, 16000);
+  } catch (e) {
+    console.warn(`PDF parse failed for ${url}:`, e);
+    return "";
+  }
+}
+
+/**
+ * Use Groq's vision model to OCR a menu image and return raw text lines
+ * (dish · price · description), one per line. Returns "" on failure.
+ */
+async function extractImageMenuText(url: string, groqKey: string): Promise<string> {
+  // Pass URL directly to the vision model — Groq fetches it server-side.
+  const body = {
+    model: GROQ_VISION_MODEL,
+    temperature: 0.1,
+    max_tokens: 2048,
+    messages: [
+      {
+        role: "user",
+        content: [
+          {
+            type: "text",
+            text:
+              "This image is a restaurant menu. Transcribe every dish exactly as printed. " +
+              "Output ONE item per line in the format: `<Category> | <Dish Name> | <Price or -> | <Short description or ->`. " +
+              "Use the menu's own section headings as Category. Skip headers, footers, addresses, hours, marketing copy. " +
+              "Preserve currency symbols. No commentary, no markdown — just the lines.",
+          },
+          { type: "image_url", image_url: { url } },
+        ],
+      },
+    ],
+  };
+
+  try {
+    const res = await fetch(GROQ_URL, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${groqKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      console.warn(`Vision OCR HTTP ${res.status} for ${url}:`, (await res.text()).slice(0, 200));
+      return "";
+    }
+    const data = await res.json();
+    return (data?.choices?.[0]?.message?.content || "").toString().slice(0, 16000);
+  } catch (e) {
+    console.warn(`Vision OCR threw for ${url}:`, e);
+    return "";
+  }
+}
+
+/**
  * Crawl the entry URL plus up to N menu-related sub-pages and merge their
  * extracted candidates + full text. Title is taken from the first page that
  * has one.
