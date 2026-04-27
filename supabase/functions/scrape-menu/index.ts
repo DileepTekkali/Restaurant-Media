@@ -660,6 +660,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     }
     for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+    addImageHints(extractDishImageHints(html, url));
   }
 
   // Fetch + extract text from menu PDFs
