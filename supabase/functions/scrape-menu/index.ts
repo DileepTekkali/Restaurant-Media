@@ -600,6 +600,13 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   const seenText = new Set<string>();
   const fullTextParts: string[] = [];
   const headingSet = new Set<string>();
+  const dishImages = new Map<string, string>();
+
+  const addImageHints = (hints: DishImageHint[]) => {
+    for (const h of hints) {
+      if (!dishImages.has(h.nameKey)) dishImages.set(h.nameKey, h.imageUrl);
+    }
+  };
 
   const entryHtml = await fetchHtml(entryUrl);
   visited.add(entryUrl);
@@ -617,6 +624,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   }
   for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
+  addImageHints(extractDishImageHints(entryHtml, entryUrl));
 
   const discovered = discoverMenuLinks(entryHtml, entryUrl);
   const subLinks = discovered.pages.filter((u) => !visited.has(u)).slice(0, 5);
