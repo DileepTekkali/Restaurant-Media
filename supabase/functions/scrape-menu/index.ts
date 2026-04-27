@@ -161,12 +161,18 @@ function findLogoUrl(html: string, baseUrl: string): string | null {
   return resolve("/favicon.ico");
 }
 
-function discoverMenuLinks(html: string, baseUrl: string): string[] {
+function discoverMenuLinks(html: string, baseUrl: string): {
+  pages: string[];
+  pdfs: string[];
+  images: string[];
+} {
   const doc = new DOMParser().parseFromString(html, "text/html");
-  if (!doc) return [];
+  if (!doc) return { pages: [], pdfs: [], images: [] };
 
   const base = new URL(baseUrl);
-  const found = new Map<string, number>(); // url -> score
+  const pageScores = new Map<string, number>();
+  const pdfScores = new Map<string, number>();
+  const imageScores = new Map<string, number>();
 
   doc.querySelectorAll("a[href]").forEach((node) => {
     const a = node as Element;
@@ -182,12 +188,7 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
       return;
     }
 
-    // Same-host only — don't wander off to social media etc.
     if (resolved.hostname !== base.hostname) return;
-    // Skip obvious non-HTML assets.
-    if (/\.(pdf|jpe?g|png|gif|svg|webp|mp4|zip|doc|docx)$/i.test(resolved.pathname)) {
-      return;
-    }
 
     const haystack = (
       (a.textContent || "") + " " + resolved.pathname + " " + (a.getAttribute("title") || "")
@@ -197,16 +198,54 @@ function discoverMenuLinks(html: string, baseUrl: string): string[] {
     for (const kw of MENU_LINK_KEYWORDS) {
       if (haystack.includes(kw)) score += kw === "menu" ? 3 : 1;
     }
+    if (score === 0) return;
 
-    if (score > 0) {
-      const key = resolved.origin + resolved.pathname;
-      found.set(key, Math.max(found.get(key) ?? 0, score));
+    const key = resolved.origin + resolved.pathname + resolved.search;
+    if (PDF_EXT.test(resolved.pathname)) {
+      pdfScores.set(key, Math.max(pdfScores.get(key) ?? 0, score + 2));
+    } else if (IMG_EXT.test(resolved.pathname)) {
+      imageScores.set(key, Math.max(imageScores.get(key) ?? 0, score + 1));
+    } else if (!/\.(gif|svg|mp4|zip|doc|docx)$/i.test(resolved.pathname)) {
+      const k = resolved.origin + resolved.pathname;
+      pageScores.set(k, Math.max(pageScores.get(k) ?? 0, score));
     }
   });
 
-  return [...found.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .map(([url]) => url);
+  // Also pick up <img> tags whose alt/src/class strongly suggest a menu board image.
+  doc.querySelectorAll("img").forEach((node) => {
+    const img = node as Element;
+    const src = img.getAttribute("src") || img.getAttribute("data-src") || "";
+    if (!src) return;
+    let resolved: URL;
+    try {
+      resolved = new URL(src, base);
+    } catch {
+      return;
+    }
+    if (!IMG_EXT.test(resolved.pathname)) return;
+    const haystack = (
+      (img.getAttribute("alt") || "") + " " +
+      (img.getAttribute("class") || "") + " " +
+      (img.getAttribute("id") || "") + " " +
+      resolved.pathname
+    ).toLowerCase();
+    let score = 0;
+    if (haystack.includes("menu")) score += 4;
+    if (haystack.includes("food") || haystack.includes("dish")) score += 1;
+    if (score >= 4) {
+      const key = resolved.origin + resolved.pathname + resolved.search;
+      imageScores.set(key, Math.max(imageScores.get(key) ?? 0, score));
+    }
+  });
+
+  const sortDesc = (m: Map<string, number>) =>
+    [...m.entries()].sort((a, b) => b[1] - a[1]).map(([u]) => u);
+
+  return {
+    pages: sortDesc(pageScores),
+    pdfs: sortDesc(pdfScores),
+    images: sortDesc(imageScores),
+  };
 }
 
 // Headings that are clearly NOT food categories.
