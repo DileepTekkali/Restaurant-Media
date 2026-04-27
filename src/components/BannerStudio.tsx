@@ -899,16 +899,18 @@ export const BannerStudio = ({
   onBack,
 }: BannerStudioProps) => {
   const { toast } = useToast();
+  // Start with nothing selected/active so we never generate banners
+  // until the user explicitly picks formats and clicks "Generate".
   const [selectedFormats, setSelectedFormats] = useState<Set<FormatKey>>(
-    new Set<FormatKey>(["square", "story", "landscape"]),
+    new Set<FormatKey>(),
   );
   const [activeFormats, setActiveFormats] = useState<Set<FormatKey>>(
-    new Set<FormatKey>(["square", "story", "landscape"]),
+    new Set<FormatKey>(),
   );
   const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
-    square: { url: null, loading: true, error: null },
-    story: { url: null, loading: true, error: null },
-    landscape: { url: null, loading: true, error: null },
+    square: { url: null, loading: false, error: null },
+    story: { url: null, loading: false, error: null },
+    landscape: { url: null, loading: false, error: null },
   });
   const [generationKey, setGenerationKey] = useState(0);
   const cancelRef = useRef(false);
