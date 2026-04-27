@@ -977,6 +977,21 @@ Deno.serve(async (req) => {
       }
 
       await supabase.from("menu_items").delete().eq("restaurant_id", restaurant.id);
+      // Match each parsed item to a scraped image by normalized dish name.
+      // Falls back to undefined → BannerStudio will then use Pollinations.
+      const findImageForItem = (name: string): string | null => {
+        const key = normalizeDishName(name);
+        if (!key) return null;
+        if (dishImages.has(key)) return dishImages.get(key)!;
+        // Loose fallback: any harvested key that contains, or is contained by,
+        // the dish name (handles "Margherita" vs "Margherita Pizza").
+        for (const [k, v] of dishImages.entries()) {
+          if (k.length < 4 || key.length < 4) continue;
+          if (k.includes(key) || key.includes(k)) return v;
+        }
+        return null;
+      };
+
       const { error: insertErr } = await supabase.from("menu_items").insert(
         items.map((i) => ({
           restaurant_id: restaurant.id,
@@ -984,6 +999,7 @@ Deno.serve(async (req) => {
           category: i.category,
           price: i.price,
           description: i.description,
+          image_url: findImageForItem(i.name),
         })),
       );
       if (insertErr) throw new Error(`Insert items failed: ${insertErr.message}`);
