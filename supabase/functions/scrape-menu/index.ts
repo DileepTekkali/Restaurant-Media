@@ -9,6 +9,12 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
+import { extractText, getDocumentProxy } from "https://esm.sh/unpdf@0.12.1";
+
+const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+const PDF_EXT = /\.pdf(\?|#|$)/i;
+const IMG_EXT = /\.(jpe?g|png|webp)(\?|#|$)/i;
+const MAX_BINARY_BYTES = 12 * 1024 * 1024; // 12MB cap per file
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
