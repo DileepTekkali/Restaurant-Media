@@ -1197,7 +1197,7 @@ export const BannerStudio = ({
 
       {formatsToRender.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-border bg-muted/30 p-10 text-center text-sm text-muted-foreground">
-          Select at least one banner size above and tap Apply to generate.
+          Pick the banner sizes you need above and tap <span className="font-semibold text-foreground">Generate</span>. We'll only render what you select — no wasted images.
         </div>
       ) : (
       <Tabs defaultValue={formatsToRender[0].key} key={activeFormatsKey} className="w-full">
