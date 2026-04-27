@@ -402,14 +402,17 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
 
-  const subLinks = discoverMenuLinks(entryHtml, entryUrl)
-    .filter((u) => !visited.has(u))
-    .slice(0, 5);
+  const discovered = discoverMenuLinks(entryHtml, entryUrl);
+  const subLinks = discovered.pages.filter((u) => !visited.has(u)).slice(0, 5);
+  const pdfLinks = discovered.pdfs.filter((u) => !visited.has(u)).slice(0, 3);
+  const imageLinks = discovered.images.filter((u) => !visited.has(u)).slice(0, 3);
 
-  console.log(`Discovered ${subLinks.length} menu-like sub-pages`);
+  console.log(
+    `Discovered ${subLinks.length} HTML sub-pages, ${pdfLinks.length} PDF(s), ${imageLinks.length} image(s)`,
+  );
 
   const subResults = await Promise.allSettled(
-    subLinks.map(async (url) => {
+    subLinks.map(async (url: string) => {
       const html = await fetchHtml(url);
       return { url, html };
     }),
@@ -433,6 +436,59 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     }
     for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+  }
+
+  // Fetch + extract text from menu PDFs
+  const pdfResults = await Promise.allSettled(
+    pdfLinks.map(async (url: string) => ({ url, text: await extractPdfText(url) })),
+  );
+  for (const r of pdfResults) {
+    if (r.status !== "fulfilled") {
+      console.warn("PDF fetch/parse failed:", r.reason);
+      continue;
+    }
+    const { url, text } = r.value;
+    if (!text) continue;
+    visited.add(url);
+    pagesFetched.push(url);
+    fullTextParts.push(`--- PDF ${url} ---\n${text}`);
+    // Treat each non-empty line as a candidate row.
+    text.split(/\r?\n/).forEach((line) => {
+      const t = line.replace(/\s+/g, " ").trim();
+      if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
+        seenText.add(t);
+        allCandidates.push({ text: t, source: "pdf" });
+      }
+    });
+  }
+
+  // Fetch + OCR menu images via Groq vision
+  const groqKeyForVision = Deno.env.get("GROQ_API_KEY");
+  if (groqKeyForVision && imageLinks.length > 0) {
+    const imgResults = await Promise.allSettled(
+      imageLinks.map(async (url: string) => ({
+        url,
+        text: await extractImageMenuText(url, groqKeyForVision),
+      })),
+    );
+    for (const r of imgResults) {
+      if (r.status !== "fulfilled") {
+        console.warn("Image OCR failed:", r.reason);
+        continue;
+      }
+      const { url, text } = r.value;
+      if (!text) continue;
+      visited.add(url);
+      pagesFetched.push(url);
+      fullTextParts.push(`--- IMAGE ${url} ---\n${text}`);
+      text.split(/\r?\n/).forEach((line) => {
+        const t = line.replace(/\s+/g, " ").trim();
+        if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
+          seenText.add(t);
+          allCandidates.push({ text: t, source: "image" });
+        }
+      });
+    }
   }
 
   const fullText = fullTextParts.join("\n\n").slice(0, 20000);
