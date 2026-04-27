@@ -591,6 +591,7 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   pagesFetched: string[];
   headings: string[];
   logoUrl: string | null;
+  dishImages: Map<string, string>;
 }> {
   const visited = new Set<string>();
   const pagesFetched: string[] = [];
