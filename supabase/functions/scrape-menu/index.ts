@@ -84,6 +84,63 @@ async function fetchHtml(url: string): Promise<string> {
 }
 
 /**
+ * Fetch a page through the Jina Reader API which renders JavaScript
+ * and returns clean, readable markdown — ideal for SPA restaurant sites.
+ * Returns null on failure so callers can fall back gracefully.
+ */
+async function fetchViaJina(url: string): Promise<string | null> {
+  try {
+    const jinaUrl = `https://r.jina.ai/${url}`;
+    const res = await fetch(jinaUrl, {
+      headers: {
+        "Accept": "text/plain, text/markdown, */*",
+        "X-Return-Format": "markdown",
+        "X-Timeout": "25",
+      },
+    });
+    if (!res.ok) return null;
+    const text = await res.text();
+    // Jina returns markdown; wrap it in a fake <body> so our HTML parser ignores it gracefully
+    // but also return it as plain text for the fullText corpus.
+    return text.length > 100 ? text : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetch HTML for a URL. If the static HTML has suspiciously thin content
+ * (< 600 chars of body text — typical of JS-rendered SPAs), fall back to
+ * Jina Reader which executes JavaScript and returns rendered markdown.
+ * This way we handle both static and dynamic restaurant websites.
+ */
+async function fetchHtmlSmart(url: string): Promise<{ html: string; jinaText: string | null }> {
+  let html = "";
+  try {
+    html = await fetchHtml(url);
+  } catch (e) {
+    // If direct fetch fails entirely, still try Jina
+    const jina = await fetchViaJina(url);
+    if (!jina) throw e; // nothing worked
+    return { html: "", jinaText: jina };
+  }
+
+  // Heuristic: extract body text length to detect thin JS-rendered shells
+  const bodyMatch = html.match(/<body[^>]*>([\s\S]*)<\/body>/i);
+  const bodyText = (bodyMatch?.[1] ?? html).replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  const isThin = bodyText.length < 800;
+
+  if (isThin) {
+    console.log(`[Jina] Static HTML thin (${bodyText.length} chars), fetching via Jina Reader for: ${url}`);
+    const jina = await fetchViaJina(url);
+    return { html, jinaText: jina };
+  }
+
+  return { html, jinaText: null };
+}
+
+
+/**
  * Find links on a page that look like they lead to menu content.
  * Resolves them against the page's base URL and dedupes.
  */
@@ -610,23 +667,34 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     }
   };
 
-  const entryHtml = await fetchHtml(entryUrl);
+  const { html: entryHtml, jinaText: entryJinaText } = await fetchHtmlSmart(entryUrl);
   visited.add(entryUrl);
   pagesFetched.push(entryUrl);
 
-  const logoUrl = findLogoUrl(entryHtml, entryUrl);
+  const logoUrl = entryHtml ? findLogoUrl(entryHtml, entryUrl) : null;
 
-  const entry = extractCandidates(entryHtml);
+  const entry = entryHtml ? extractCandidates(entryHtml) : { title: null, candidates: [], fullText: "", headings: [] };
   title = entry.title;
   for (const c of entry.candidates) {
-    if (!seenText.has(c.text)) {
-      seenText.add(c.text);
-      allCandidates.push(c);
-    }
+    if (!seenText.has(c.text)) { seenText.add(c.text); allCandidates.push(c); }
   }
   for (const h of entry.headings) headingSet.add(h);
   if (entry.fullText) fullTextParts.push(entry.fullText);
-  addImageHints(extractDishImageHints(entryHtml, entryUrl));
+  if (entryHtml) addImageHints(extractDishImageHints(entryHtml, entryUrl));
+
+  // If Jina gave us rendered text, add it to the corpus as plain-text candidates
+  if (entryJinaText) {
+    console.log(`[Jina] Got ${entryJinaText.length} chars from Jina Reader for entry page`);
+    fullTextParts.push(`--- JINA RENDERED ${entryUrl} ---\n${entryJinaText.slice(0, 16000)}`);
+    // Also seed candidates from Jina lines (each non-trivial line could be a dish)
+    entryJinaText.split(/\r?\n/).forEach((line: string) => {
+      const t = line.replace(/^#+\s*/, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+      if (t.length >= 8 && t.length <= 400 && !seenText.has(t)) {
+        seenText.add(t);
+        allCandidates.push({ text: t, source: "jina" });
+      }
+    });
+  }
 
   // Recursive function to crawl all menu pages deeply
 async function crawlAllMenuPages(
@@ -650,8 +718,8 @@ async function crawlAllMenuPages(
 
   const results = await Promise.allSettled(
     urls.map(async (url: string) => {
-      const html = await fetchHtml(url);
-      return { url, html };
+      const { html, jinaText } = await fetchHtmlSmart(url);
+      return { url, html, jinaText };
     }),
   );
 
@@ -664,25 +732,33 @@ async function crawlAllMenuPages(
       console.warn("Page fetch failed:", r.reason);
       continue;
     }
-    const { url, html } = r.value;
+    const { url, html, jinaText } = r.value;
     if (visited.has(url)) continue;
     visited.add(url);
     pagesFetched.push(url);
 
-    const ex = extractCandidates(html);
-    if (!title && ex.title) title = ex.title;
-    for (const c of ex.candidates) {
-      if (!seenText.has(c.text)) {
-        seenText.add(c.text);
-        allCandidates.push(c);
+    if (html) {
+      const ex = extractCandidates(html);
+      if (!title && ex.title) title = ex.title;
+      for (const c of ex.candidates) {
+        if (!seenText.has(c.text)) { seenText.add(c.text); allCandidates.push(c); }
       }
+      for (const h of ex.headings) headingSet.add(h);
+      if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
+      addImageHints(extractDishImageHints(html, url));
     }
-    for (const h of ex.headings) headingSet.add(h);
-    if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
-    addImageHints(extractDishImageHints(html, url));
+    if (jinaText) {
+      fullTextParts.push(`--- JINA ${url} ---\n${jinaText.slice(0, 12000)}`);
+      jinaText.split(/\r?\n/).forEach((line: string) => {
+        const t = line.replace(/^#+\s*/, "").replace(/[*_`]/g, "").replace(/\s+/g, " ").trim();
+        if (t.length >= 8 && t.length <= 400 && !seenText.has(t)) {
+          seenText.add(t); allCandidates.push({ text: t, source: "jina" });
+        }
+      });
+    }
 
-    // Discover links on this page
-    const discovered = discoverMenuLinks(html, url);
+    // Discover links on this page (only possible when we have raw HTML)
+    const discovered = html ? discoverMenuLinks(html, url) : { pages: [], pdfs: [], images: [] };
     const newSubLinks = discovered.pages.filter((u) => !visited.has(u));
     const newPdfLinks = discovered.pdfs.filter((u) => !visited.has(u));
     const newImageLinks = discovered.images.filter((u) => !visited.has(u));
@@ -695,7 +771,7 @@ async function crawlAllMenuPages(
   return { newSubLinks: allNewSubLinks, newPdfLinks: allNewPdfLinks, newImageLinks: allNewImageLinks };
 }
 
-const discovered = discoverMenuLinks(entryHtml, entryUrl);
+const discovered = entryHtml ? discoverMenuLinks(entryHtml, entryUrl) : { pages: [], pdfs: [], images: [] };
 let subLinks = discovered.pages.filter((u) => !visited.has(u));
 let pdfLinks = discovered.pdfs.filter((u) => !visited.has(u));
 let imageLinks = discovered.images.filter((u) => !visited.has(u));
@@ -853,18 +929,18 @@ ${headingsBlock}
 - Keep category names short (max 40 chars).
 
 OTHER RULES:
+- BE EXHAUSTIVE: If the source lists 50+ dishes across multiple categories, return them ALL.
 - Deduplicate items across pages.
 - Preserve original currency symbols in price (₹, $, €, £, etc.). Use null if no price is visible.
 - Descriptions max 25 words. Use null if absent — do NOT invent descriptions.
 - Fix obvious typos in dish names but keep the original meaning.
 - Return ONLY genuine menu items. Skip nav, contact info, hours, addresses, marketing copy.
-- Be EXHAUSTIVE — if the source lists 30+ dishes across multiple categories, return them all.
 
 Structured candidates:
 ${candidateBlock}
 
 Full page text from all crawled pages (use this to figure out which website heading each item belongs under):
-${fullText.slice(0, 12000)}`;
+${fullText.slice(0, 16000)}`;
 
   const body = {
     model: GROQ_MODEL,

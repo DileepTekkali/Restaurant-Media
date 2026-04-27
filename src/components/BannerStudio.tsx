@@ -741,10 +741,17 @@ function composeBanner({
     }
 
     const contentW = Math.min(usableMax, Math.max(priceW, labelW));
-    const bw = contentW + padX * 2 + notch; // include notch in total tag width
+    const bw = contentW + padX * 2 + notch;
     const bh = labelSize + priceSize + padY * 2 + 6;
-    const bx = W - m - bw - 12;
+    // Clamp bx so tag never overflows the left canvas edge
+    const bx = Math.max(m, W - m - bw - 12);
     const by = photoTop + 16;
+
+    // Final safety: if price still wider than the text area after shrinking, truncate it
+    ctx.font = `800 ${priceSize}px ${SANS}`;
+    const finalPriceText = ctx.measureText(priceText).width > contentW
+      ? truncateText(ctx, priceText, contentW)
+      : priceText;
 
     // Notch (price-tag look) on the left side
     ctx.save();
@@ -796,7 +803,8 @@ function composeBanner({
     // Price value
     ctx.fillStyle = theme.ink;
     ctx.font = `800 ${priceSize}px ${SANS}`;
-    ctx.fillText(priceText, textCx, by + padY + labelSize + priceSize + 4);
+    ctx.textAlign = "center";
+    ctx.fillText(finalPriceText, textCx, by + padY + labelSize + priceSize + 4);
   }
 
   /* ──── 7) Content band BELOW photo: dish name + description + companions ──── */
@@ -1050,11 +1058,9 @@ export const BannerStudio = ({
   const [activeFormats, setActiveFormats] = useState<Set<FormatKey>>(
     new Set<FormatKey>(),
   );
-  const [banners, setBanners] = useState<Record<FormatKey, BannerState>>({
-    square: { url: null, loading: false, error: null },
-    story: { url: null, loading: false, error: null },
-    landscape: { url: null, loading: false, error: null },
-  });
+  // key: `${item.id}::${formatKey}` — one slot per dish × format
+  const [banners, setBanners] = useState<Record<string, BannerState>>({});
+  const [activeDishIdx, setActiveDishIdx] = useState(0);
   const [generationKey, setGenerationKey] = useState(0);
   const cancelRef = useRef(false);
 
@@ -1073,25 +1079,21 @@ export const BannerStudio = ({
 
   useEffect(() => {
     cancelRef.current = false;
-    setBanners({
-      square: {
-        url: null,
-        loading: activeFormats.has("square"),
-        error: activeFormats.has("square") ? null : null,
-      },
-      story: {
-        url: null,
-        loading: activeFormats.has("story"),
-        error: null,
-      },
-      landscape: {
-        url: null,
-        loading: activeFormats.has("landscape"),
-        error: null,
-      },
-    });
 
-    if (activeFormats.size === 0) return;
+    // Build initial loading states: one slot per dish × active format
+    const initial: Record<string, BannerState> = {};
+    if (activeFormats.size > 0) {
+      cappedItems.forEach((item) => {
+        FORMATS.forEach((f) => {
+          if (activeFormats.has(f.key)) {
+            initial[`${item.id}::${f.key}`] = { url: null, loading: true, error: null };
+          }
+        });
+      });
+    }
+    setBanners(initial);
+
+    if (activeFormats.size === 0 || cappedItems.length === 0) return;
 
     (async () => {
       try {
@@ -1101,39 +1103,21 @@ export const BannerStudio = ({
         if (logoUrl) {
           const stripped = logoUrl.replace(/^https?:\/\//, "");
           const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(stripped)}&w=600&output=png`;
-          try {
-            logo = await loadImage(proxied);
-          } catch {
-            try {
-              logo = await loadImage(logoUrl);
-            } catch {
-              logo = null;
-            }
+          try { logo = await loadImage(proxied); } catch {
+            try { logo = await loadImage(logoUrl); } catch { logo = null; }
           }
         }
         if (cancelRef.current) return;
 
+        // Load all dish images in parallel
         const dishImages = await Promise.all(
           cappedItems.map(async (item) => {
-            // 1) Prefer the dish photo we scraped from the restaurant's site.
-            //    Route through weserv to dodge CORS / hotlink protection so
-            //    the canvas stays exportable.
             if (item.image_url) {
               const stripped = item.image_url.replace(/^https?:\/\//, "");
               const proxied = `https://images.weserv.nl/?url=${encodeURIComponent(stripped)}&w=1280&h=1280&fit=cover&output=jpg`;
-              try {
-                const img = await loadImage(proxied);
-                return { item, img };
-              } catch {
-                try {
-                  const img = await loadImage(item.image_url);
-                  return { item, img };
-                } catch {
-                  /* fall through to Pollinations */
-                }
-              }
+              try { const img = await loadImage(proxied); return { item, img }; } catch {}
+              try { const img = await loadImage(item.image_url); return { item, img }; } catch {}
             }
-            // 2) No scraped image (or it failed) → generate via Pollinations through Supabase function.
             const parts = [
               "professional food photography of",
               item.name,
@@ -1142,18 +1126,10 @@ export const BannerStudio = ({
               ", restaurant menu hero shot, 45-degree angle, shallow depth of field, magazine quality, high detail, appetizing",
             ];
             const prompt = parts.join(" ").slice(0, 420);
-            const baseSeed = Math.abs(
-              [...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0),
-            );
+            const baseSeed = Math.abs([...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0));
             const seed = (baseSeed + generationKey) % 9_999_999;
-            
-            console.log('[Pollinations] Generating for:', item.name);
-            console.log('[Pollinations] Prompt:', prompt);
-            
-            // Try using Supabase Edge Function for image generation
             for (let attempt = 1; attempt <= 2; attempt++) {
               try {
-                console.log('[Pollinations] Attempt', attempt, '- using Supabase Edge Function');
                 const response = await fetch(
                   `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`,
                   {
@@ -1162,139 +1138,124 @@ export const BannerStudio = ({
                       'Content-Type': 'application/json',
                       'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
                     },
-                    body: JSON.stringify({
-                      prompt,
-                      width: 1280,
-                      height: 1280,
-                      seed,
-                      model: "flux",
-                      nologo: true,
-                      enhance: true,
-                    }),
+                    body: JSON.stringify({ prompt, width: 1280, height: 1280, seed, model: "flux", nologo: true, enhance: true }),
                   }
                 );
-                
-                if (!response.ok) {
-                  throw new Error(`HTTP error: ${response.status}`);
-                }
-                
-                const contentType = response.headers.get('content-type') || 'image/jpeg';
+                if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
                 const blob = await response.blob();
                 const objectUrl = URL.createObjectURL(blob);
-                
-                return new Promise<{ item: MenuItem; img: HTMLImageElement }>((resolve, reject) => {
+                return await new Promise<{ item: MenuItem; img: HTMLImageElement }>((resolve, reject) => {
                   const img = new Image();
                   img.crossOrigin = "anonymous";
-                  img.onload = () => {
-                    console.log('[Pollinations] Loaded:', item.name, 'Size:', img.width, 'x', img.height);
-                    resolve({ item, img });
-                  };
+                  img.onload = () => resolve({ item, img });
                   img.onerror = () => reject(new Error(`Failed to load image`));
                   img.src = objectUrl;
                 });
               } catch (e) {
-                console.log('[Pollinations] Attempt', attempt, 'failed:', e instanceof Error ? e.message : 'error');
-                if (attempt === 2) {
-                  // Last attempt failed, use fallback gradient
-                  console.log('[Pollinations] All attempts failed, using gradient fallback for:', item.name);
-                  return createFallbackImage(item, theme);
-                }
+                if (attempt === 2) return createFallbackImage(item, theme);
               }
             }
-            throw new Error('All attempts failed');
+            return createFallbackImage(item, theme);
           }),
         );
         if (cancelRef.current) return;
 
-        // Ask Groq for a polished, professional one-liner for the hero dish.
-        let heroCopy: string | null = null;
-        const heroItem = cappedItems[0];
-        if (heroItem) {
-          try {
-            const { data } = await supabase.functions.invoke<{ tagline?: string; error?: string }>(
-              "dish-copy",
-              {
-                body: {
-                  dishName: heroItem.name,
-                  dishDescription: heroItem.description,
-                  campaignType: campaign.type,
-                  festival: campaign.festival ?? null,
-                  restaurantName: safeName,
-                },
-              },
-            );
-            if (data?.tagline) heroCopy = data.tagline;
-          } catch {
-            heroCopy = null; // graceful fallback to scraped description
-          }
-        }
+        // Fetch AI copy for EACH dish in parallel
+        const copyMap: Record<string, string | null> = {};
+        await Promise.all(
+          cappedItems.map(async (item) => {
+            try {
+              const { data } = await supabase.functions.invoke<{ tagline?: string }>(
+                "dish-copy",
+                { body: { dishName: item.name, dishDescription: item.description, campaignType: campaign.type, festival: campaign.festival ?? null, restaurantName: safeName } },
+              );
+              copyMap[item.id] = data?.tagline ?? null;
+            } catch { copyMap[item.id] = null; }
+          }),
+        );
         if (cancelRef.current) return;
 
-        for (const format of FORMATS) {
+        // Generate one banner per dish × format
+        for (let dishIdx = 0; dishIdx < cappedItems.length; dishIdx++) {
           if (cancelRef.current) return;
-          if (!activeFormats.has(format.key)) continue;
-          try {
-            const canvas = composeBanner({
-              format,
-              restaurantName: safeName,
-              websiteUrl,
-              dishes: dishImages,
-              logo,
-              theme,
-              heroCopy,
-              currency,
-            });
-            const url = canvas.toDataURL("image/png");
-            setBanners((prev) => ({
-              ...prev,
-              [format.key]: { url, loading: false, error: null },
-            }));
-          } catch (e) {
-            setBanners((prev) => ({
-              ...prev,
-              [format.key]: {
-                url: null,
-                loading: false,
-                error: e instanceof Error ? e.message : "Failed to render",
-              },
-            }));
+          const heroEntry = dishImages[dishIdx];
+          // Companions: all other dishes' images
+          const companionEntries = dishImages.filter((_, i) => i !== dishIdx);
+          const heroCopy = copyMap[cappedItems[dishIdx].id] ?? null;
+
+          for (const format of FORMATS) {
+            if (cancelRef.current) return;
+            if (!activeFormats.has(format.key)) continue;
+            const slotKey = `${cappedItems[dishIdx].id}::${format.key}`;
+            try {
+              const canvas = composeBanner({
+                format,
+                restaurantName: safeName,
+                websiteUrl,
+                dishes: [heroEntry, ...companionEntries],
+                logo,
+                theme,
+                heroCopy,
+                currency,
+              });
+              const url = canvas.toDataURL("image/png");
+              setBanners((prev) => ({ ...prev, [slotKey]: { url, loading: false, error: null } }));
+            } catch (e) {
+              const errMsg = e instanceof Error ? e.message : "Failed to render";
+              setBanners((prev) => ({ ...prev, [slotKey]: { url: null, loading: false, error: errMsg } }));
+            }
           }
         }
       } catch (e) {
         const msg = e instanceof Error ? e.message : "Failed to generate banners";
         toast({ title: "Banner generation failed", description: msg, variant: "destructive" });
-        setBanners((prev) => ({
-          square: activeFormats.has("square") ? { url: null, loading: false, error: msg } : prev.square,
-          story: activeFormats.has("story") ? { url: null, loading: false, error: msg } : prev.story,
-          landscape: activeFormats.has("landscape") ? { url: null, loading: false, error: msg } : prev.landscape,
-        }));
+        // Mark all slots as errored
+        setBanners((prev) => {
+          const next = { ...prev };
+          cappedItems.forEach((item) => {
+            FORMATS.forEach((f) => {
+              if (activeFormats.has(f.key)) {
+                const k = `${item.id}::${f.key}`;
+                if (next[k]?.loading) next[k] = { url: null, loading: false, error: msg };
+              }
+            });
+          });
+          return next;
+        });
       }
     })();
 
-    return () => {
-      cancelRef.current = true;
-    };
+    return () => { cancelRef.current = true; };
   }, [cappedItems, safeName, websiteUrl, logoUrl, generationKey, theme, toast, campaign, currency, activeFormatsKey, activeFormats]);
 
-  const downloadBanner = (key: FormatKey) => {
-    const banner = banners[key];
-    if (!banner.url) return;
+  const downloadBanner = (itemId: string, fk: FormatKey) => {
+    const banner = banners[`${itemId}::${fk}`];
+    if (!banner?.url) return;
+    const item = cappedItems.find((i) => i.id === itemId);
     const a = document.createElement("a");
     a.href = banner.url;
-    a.download = `${slugify(safeName)}-${campaign.type}-${key}.png`;
+    a.download = `${slugify(safeName)}-${slugify(item?.name ?? "dish")}-${campaign.type}-${fk}.png`;
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
   };
 
   const downloadAll = () => {
-    formatsToRender.forEach((f, i) => {
-      setTimeout(() => downloadBanner(f.key), i * 250);
-    });
+    const combos: [string, FormatKey][] = [];
+    cappedItems.forEach((item) =>
+      formatsToRender.forEach((f) => {
+        if (banners[`${item.id}::${f.key}`]?.url) combos.push([item.id, f.key]);
+      }),
+    );
+    combos.forEach(([itemId, fk], i) => setTimeout(() => downloadBanner(itemId, fk), i * 250));
   };
 
   const allReady =
-    formatsToRender.length > 0 && formatsToRender.every((f) => banners[f.key].url);
+    formatsToRender.length > 0 &&
+    cappedItems.length > 0 &&
+    cappedItems.every((item) =>
+      formatsToRender.every((f) => banners[`${item.id}::${f.key}`]?.url),
+    );
 
   const toggleFormat = (key: FormatKey) => {
     setSelectedFormats((prev) => {
@@ -1313,6 +1274,7 @@ export const BannerStudio = ({
       });
       return;
     }
+    setActiveDishIdx(0);
     setActiveFormats(new Set(selectedFormats));
     setGenerationKey((k) => k + 1);
   };
@@ -1320,6 +1282,8 @@ export const BannerStudio = ({
   const selectionDirty =
     selectedFormats.size !== activeFormats.size ||
     [...selectedFormats].some((k) => !activeFormats.has(k));
+
+  const activeDishItem = cappedItems[activeDishIdx] ?? cappedItems[0];
 
   return (
     <section className="w-full max-w-5xl animate-fade-in-up">
@@ -1410,7 +1374,7 @@ export const BannerStudio = ({
         </p>
         {items.length > cappedItems.length && (
           <p className="text-xs text-muted-foreground">
-            Showing first {cappedItems.length} of {items.length} selected — first dish is the hero, the rest are featured below.
+            Showing first {cappedItems.length} of {items.length} selected — each dish gets its own banner set.
           </p>
         )}
       </header>
@@ -1420,69 +1384,92 @@ export const BannerStudio = ({
           Pick the banner sizes you need above and tap <span className="font-semibold text-foreground">Generate</span>. We'll only render what you select — no wasted images.
         </div>
       ) : (
-      <Tabs defaultValue={formatsToRender[0].key} key={activeFormatsKey} className="w-full">
-        <TabsList
-          className="grid w-full"
-          style={{ gridTemplateColumns: `repeat(${formatsToRender.length}, minmax(0, 1fr))` }}
-        >
-          {formatsToRender.map((f) => (
-            <TabsTrigger key={f.key} value={f.key} className="text-xs sm:text-sm">
-              {f.label}
-            </TabsTrigger>
-          ))}
-        </TabsList>
+      <>
+        {/* Dish selector — shown only when multiple dishes are selected */}
+        {cappedItems.length > 1 && (
+          <div className="mb-4 flex flex-wrap gap-2">
+            {cappedItems.map((item, idx) => (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => setActiveDishIdx(idx)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+                  activeDishIdx === idx
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "border-border bg-background text-muted-foreground hover:text-foreground"
+                }`}
+              >
+                {idx + 1}. {item.name.length > 28 ? item.name.slice(0, 25) + "…" : item.name}
+              </button>
+            ))}
+          </div>
+        )}
 
-        {formatsToRender.map((f) => {
-          const state = banners[f.key];
-          return (
-            <TabsContent key={f.key} value={f.key} className="mt-6">
-              <div className="flex flex-col items-center gap-4">
-                <p className="text-xs text-muted-foreground">{f.description}</p>
-                <div
-                  className="relative w-full overflow-hidden rounded-2xl border border-border bg-muted/40 shadow-elegant"
-                  style={{
-                    maxWidth:
-                      f.key === "story"
-                        ? "min(420px, 100%)"
-                        : f.key === "landscape"
-                          ? "min(900px, 100%)"
-                          : "min(640px, 100%)",
-                    aspectRatio: `${f.width} / ${f.height}`,
-                  }}
-                >
-                  {state.loading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground">
-                      <Loader2 className="h-8 w-8 animate-spin text-primary" />
-                      <p className="text-sm">Composing banner…</p>
-                    </div>
-                  )}
-                  {state.error && !state.loading && (
-                    <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm text-destructive">
-                      <ImageIcon className="h-8 w-8" />
-                      {state.error}
-                    </div>
-                  )}
-                  {state.url && (
-                    <img
-                      src={state.url}
-                      alt={`${f.label} banner for ${safeName}`}
-                      className="h-full w-full object-contain"
-                    />
-                  )}
+        <Tabs defaultValue={formatsToRender[0].key} key={`${activeFormatsKey}-${activeDishIdx}`} className="w-full">
+          <TabsList
+            className="grid w-full"
+            style={{ gridTemplateColumns: `repeat(${formatsToRender.length}, minmax(0, 1fr))` }}
+          >
+            {formatsToRender.map((f) => (
+              <TabsTrigger key={f.key} value={f.key} className="text-xs sm:text-sm">
+                {f.label}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          {formatsToRender.map((f) => {
+            const slotKey = activeDishItem ? `${activeDishItem.id}::${f.key}` : "";
+            const state = banners[slotKey] ?? { url: null, loading: activeFormats.size > 0, error: null };
+            return (
+              <TabsContent key={f.key} value={f.key} className="mt-6">
+                <div className="flex flex-col items-center gap-4">
+                  <p className="text-xs text-muted-foreground">{f.description}</p>
+                  <div
+                    className="relative w-full overflow-hidden rounded-2xl border border-border bg-muted/40 shadow-elegant"
+                    style={{
+                      maxWidth:
+                        f.key === "story"
+                          ? "min(420px, 100%)"
+                          : f.key === "landscape"
+                            ? "min(900px, 100%)"
+                            : "min(640px, 100%)",
+                      aspectRatio: `${f.width} / ${f.height}`,
+                    }}
+                  >
+                    {state.loading && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 text-muted-foreground">
+                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                        <p className="text-sm">Composing banner…</p>
+                      </div>
+                    )}
+                    {state.error && !state.loading && (
+                      <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 p-6 text-center text-sm text-destructive">
+                        <ImageIcon className="h-8 w-8" />
+                        {state.error}
+                      </div>
+                    )}
+                    {state.url && (
+                      <img
+                        src={state.url}
+                        alt={`${f.label} banner for ${activeDishItem?.name ?? safeName}`}
+                        className="h-full w-full object-contain"
+                      />
+                    )}
+                  </div>
+                  <Button
+                    onClick={() => activeDishItem && downloadBanner(activeDishItem.id, f.key)}
+                    disabled={!state.url}
+                    className="gap-2"
+                  >
+                    <Download className="h-4 w-4" />
+                    Download {f.label}
+                  </Button>
                 </div>
-                <Button
-                  onClick={() => downloadBanner(f.key)}
-                  disabled={!state.url}
-                  className="gap-2"
-                >
-                  <Download className="h-4 w-4" />
-                  Download {f.label}
-                </Button>
-              </div>
-            </TabsContent>
-          );
-        })}
-      </Tabs>
+              </TabsContent>
+            );
+          })}
+        </Tabs>
+      </>
       )}
     </section>
   );
