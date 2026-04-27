@@ -1,11 +1,12 @@
 // Scrape a restaurant website and extract a structured menu using Groq.
 // Strategy:
-//   1. Fetch the given URL.
+//   1. Fetch the given URL (static HTML).
 //   2. Discover menu-related sub-pages (links containing "menu", "food",
 //      "dishes", "carte", etc.) and fetch a handful of them in parallel.
 //   3. Strip each page to plain-text candidates + a fallback full-text body.
-//   4. Send the merged corpus to Groq via tool-calling for clean JSON.
-//   5. Persist the structured items to Supabase.
+//   4. Extract text from menu images using Groq Vision OCR.
+//   5. Send the merged corpus to Groq via tool-calling for clean JSON.
+//   6. Persist the structured items to Supabase.
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.45.0";
 import { DOMParser, Element } from "https://deno.land/x/deno_dom@v0.1.45/deno-dom-wasm.ts";
@@ -15,6 +16,7 @@ const GROQ_VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
 const PDF_EXT = /\.pdf(\?|#|$)/i;
 const IMG_EXT = /\.(jpe?g|png|webp)(\?|#|$)/i;
 const MAX_BINARY_BYTES = 12 * 1024 * 1024; // 12MB cap per file
+const DYNAMIC_SCRAPE_TIMEOUT = 30000; // 30 seconds for dynamic rendering
 
 const corsHeaders = {
   "Access-Control-Allow-Origin": "*",
@@ -626,30 +628,47 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
   if (entry.fullText) fullTextParts.push(entry.fullText);
   addImageHints(extractDishImageHints(entryHtml, entryUrl));
 
-  const discovered = discoverMenuLinks(entryHtml, entryUrl);
-  const subLinks = discovered.pages.filter((u) => !visited.has(u)).slice(0, 5);
-  const pdfLinks = discovered.pdfs.filter((u) => !visited.has(u)).slice(0, 3);
-  const imageLinks = discovered.images.filter((u) => !visited.has(u)).slice(0, 3);
+  // Recursive function to crawl all menu pages deeply
+async function crawlAllMenuPages(
+  urls: string[],
+  visited: Set<string>,
+  allCandidates: RawCandidate[],
+  seenText: Set<string>,
+  fullTextParts: string[],
+  headingSet: Set<string>,
+  dishImages: Map<string, string>,
+  pagesFetched: string[],
+  title: string | null,
+  depth: number,
+  maxDepth: number = 3
+): Promise<{ newSubLinks: string[]; newPdfLinks: string[]; newImageLinks: string[] }> {
+  if (depth > maxDepth || urls.length === 0) {
+    return { newSubLinks: [], newPdfLinks: [], newImageLinks: [] };
+  }
 
-  console.log(
-    `Discovered ${subLinks.length} HTML sub-pages, ${pdfLinks.length} PDF(s), ${imageLinks.length} image(s)`,
-  );
+  console.log(`[Crawl] Depth ${depth}: Processing ${urls.length} URLs`);
 
-  const subResults = await Promise.allSettled(
-    subLinks.map(async (url: string) => {
+  const results = await Promise.allSettled(
+    urls.map(async (url: string) => {
       const html = await fetchHtml(url);
       return { url, html };
     }),
   );
 
-  for (const r of subResults) {
+  let allNewSubLinks: string[] = [];
+  let allNewPdfLinks: string[] = [];
+  let allNewImageLinks: string[] = [];
+
+  for (const r of results) {
     if (r.status !== "fulfilled") {
-      console.warn("Sub-page fetch failed:", r.reason);
+      console.warn("Page fetch failed:", r.reason);
       continue;
     }
     const { url, html } = r.value;
+    if (visited.has(url)) continue;
     visited.add(url);
     pagesFetched.push(url);
+
     const ex = extractCandidates(html);
     if (!title && ex.title) title = ex.title;
     for (const c of ex.candidates) {
@@ -661,72 +680,136 @@ async function gatherMenuCorpus(entryUrl: string): Promise<{
     for (const h of ex.headings) headingSet.add(h);
     if (ex.fullText) fullTextParts.push(`--- ${url} ---\n${ex.fullText}`);
     addImageHints(extractDishImageHints(html, url));
+
+    // Discover links on this page
+    const discovered = discoverMenuLinks(html, url);
+    const newSubLinks = discovered.pages.filter((u) => !visited.has(u));
+    const newPdfLinks = discovered.pdfs.filter((u) => !visited.has(u));
+    const newImageLinks = discovered.images.filter((u) => !visited.has(u));
+
+    allNewSubLinks.push(...newSubLinks);
+    allNewPdfLinks.push(...newPdfLinks);
+    allNewImageLinks.push(...newImageLinks);
   }
 
-  // Fetch + extract text from menu PDFs
-  const pdfResults = await Promise.allSettled(
-    pdfLinks.map(async (url: string) => ({ url, text: await extractPdfText(url) })),
+  return { newSubLinks: allNewSubLinks, newPdfLinks: allNewPdfLinks, newImageLinks: allNewImageLinks };
+}
+
+const discovered = discoverMenuLinks(entryHtml, entryUrl);
+let subLinks = discovered.pages.filter((u) => !visited.has(u));
+let pdfLinks = discovered.pdfs.filter((u) => !visited.has(u));
+let imageLinks = discovered.images.filter((u) => !visited.has(u));
+
+console.log(`Discovered ${subLinks.length} HTML sub-pages, ${pdfLinks.length} PDF(s), ${imageLinks.length} image(s)`);
+
+// Crawl all sub-pages recursively
+const uniqueSubLinks = [...new Set(subLinks)];
+const uniquePdfLinks = [...new Set(pdfLinks)];
+const uniqueImageLinks = [...new Set(imageLinks)];
+
+// Process sub-pages in batches, collecting more links as we go
+let currentSubLinks = uniqueSubLinks;
+let currentPdfLinks = [...uniquePdfLinks];
+let currentImageLinks = [...uniqueImageLinks];
+
+for (let depth = 0; depth < 3; depth++) {
+  if (currentSubLinks.length === 0) break;
+
+  const toProcess = currentSubLinks.slice(0, 10); // Process up to 10 at a time
+  const { newSubLinks, newPdfLinks, newImageLinks } = await crawlAllMenuPages(
+    toProcess,
+    visited,
+    allCandidates,
+    seenText,
+    fullTextParts,
+    headingSet,
+    dishImages,
+    pagesFetched,
+    null, // title param (not used in recursion for now)
+    depth + 1,
+    3
   );
-  for (const r of pdfResults) {
+
+  // Add newly discovered links
+  const freshSubLinks = newSubLinks.filter((u) => !visited.has(u) && !currentSubLinks.includes(u));
+  const freshPdfLinks = newPdfLinks.filter((u) => !visited.has(u) && !currentPdfLinks.includes(u));
+  const freshImageLinks = newImageLinks.filter((u) => !visited.has(u) && !currentImageLinks.includes(u));
+
+  currentSubLinks = freshSubLinks;
+  currentPdfLinks.push(...freshPdfLinks);
+  currentImageLinks.push(...freshImageLinks);
+
+  console.log(`[Crawl] Depth ${depth + 1}: Found ${freshSubLinks.length} new sub-links, ${freshPdfLinks.length} new PDFs, ${freshImageLinks.length} new images`);
+}
+
+// Final PDF collection from all discovered links
+pdfLinks = [...new Set(currentPdfLinks)];
+
+// Fetch + extract text from ALL discovered PDFs (from all pages)
+const allPdfLinks = [...new Set([...pdfLinks, ...currentPdfLinks])];
+const pdfResults = await Promise.allSettled(
+  allPdfLinks.slice(0, 10).map(async (url: string) => ({ url, text: await extractPdfText(url) })),
+);
+for (const r of pdfResults) {
+  if (r.status !== "fulfilled") {
+    console.warn("PDF fetch/parse failed:", r.reason);
+    continue;
+  }
+  const { url, text } = r.value;
+  if (!text) continue;
+  visited.add(url);
+  pagesFetched.push(url);
+  fullTextParts.push(`--- PDF ${url} ---\n${text}`);
+  text.split(/\r?\n/).forEach((line: string) => {
+    const t = line.replace(/\s+/g, " ").trim();
+    if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
+      seenText.add(t);
+      allCandidates.push({ text: t, source: "pdf" });
+    }
+  });
+}
+
+// Enhanced image menu extraction via Groq Vision for image links
+const allImageLinks = [...new Set([...imageLinks, ...currentImageLinks])];
+const groqKeyForVision = Deno.env.get("GROQ_API_KEY");
+if (groqKeyForVision && allImageLinks.length > 0) {
+  const imgResults = await Promise.allSettled(
+    allImageLinks.slice(0, 10).map(async (url: string) => ({
+      url,
+      text: await extractImageMenuText(url, groqKeyForVision),
+    })),
+  );
+  for (const r of imgResults) {
     if (r.status !== "fulfilled") {
-      console.warn("PDF fetch/parse failed:", r.reason);
+      console.warn("Image OCR failed:", r.reason);
       continue;
     }
     const { url, text } = r.value;
     if (!text) continue;
     visited.add(url);
     pagesFetched.push(url);
-    fullTextParts.push(`--- PDF ${url} ---\n${text}`);
-    // Treat each non-empty line as a candidate row.
+    fullTextParts.push(`--- IMAGE ${url} ---\n${text}`);
     text.split(/\r?\n/).forEach((line: string) => {
       const t = line.replace(/\s+/g, " ").trim();
       if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
         seenText.add(t);
-        allCandidates.push({ text: t, source: "pdf" });
+        allCandidates.push({ text: t, source: "image" });
       }
     });
   }
+}
 
-  // Fetch + OCR menu images via Groq vision
-  const groqKeyForVision = Deno.env.get("GROQ_API_KEY");
-  if (groqKeyForVision && imageLinks.length > 0) {
-    const imgResults = await Promise.allSettled(
-      imageLinks.map(async (url: string) => ({
-        url,
-        text: await extractImageMenuText(url, groqKeyForVision),
-      })),
-    );
-    for (const r of imgResults) {
-      if (r.status !== "fulfilled") {
-        console.warn("Image OCR failed:", r.reason);
-        continue;
-      }
-      const { url, text } = r.value;
-      if (!text) continue;
-      visited.add(url);
-      pagesFetched.push(url);
-      fullTextParts.push(`--- IMAGE ${url} ---\n${text}`);
-      text.split(/\r?\n/).forEach((line: string) => {
-        const t = line.replace(/\s+/g, " ").trim();
-        if (t.length >= 8 && t.length <= 600 && !seenText.has(t)) {
-          seenText.add(t);
-          allCandidates.push({ text: t, source: "image" });
-        }
-      });
-    }
-  }
+const fullText = fullTextParts.join("\n\n").slice(0, 20000);
 
-  const fullText = fullTextParts.join("\n\n").slice(0, 20000);
-
-  return {
-    title,
-    candidates: allCandidates.slice(0, 400),
-    fullText,
-    pagesFetched,
-    headings: [...headingSet].slice(0, 60),
-    logoUrl,
-    dishImages,
-  };
+return {
+  title,
+  candidates: allCandidates.slice(0, 400),
+  fullText,
+  pagesFetched,
+  headings: [...headingSet].slice(0, 60),
+  logoUrl,
+  dishImages,
+};
 }
 
 interface ParsedItem {

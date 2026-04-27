@@ -221,6 +221,60 @@ function wrapText(
   return lines;
 }
 
+function fitText(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  initialSize: number,
+  minSize: number,
+): { size: number; text: string } {
+  let size = initialSize;
+  let textWidth = ctx.measureText(text).width;
+  while (textWidth > maxWidth && size > minSize) {
+    size -= 1;
+    ctx.font = ctx.font.replace(/\d+px/, `${size}px`);
+    textWidth = ctx.measureText(text).width;
+  }
+  return { size, text };
+}
+
+function fitTextOrTruncate(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  maxWidth: number,
+  initialSize: number,
+  minSize: number,
+): { size: number; text: string } {
+  ctx.font = `${ctx.font.replace(/\d+px/, "").replace(/^\w+\s/, "")} ${initialSize}px`;
+  let textWidth = ctx.measureText(text).width;
+  if (textWidth <= maxWidth) {
+    return { size: initialSize, text };
+  }
+  let size = initialSize;
+  while (textWidth > maxWidth && size > minSize) {
+    size -= 1;
+    ctx.font = ctx.font.replace(/\d+px/, `${size}px`);
+    textWidth = ctx.measureText(text).width;
+  }
+  if (textWidth > maxWidth) {
+    let truncated = text;
+    while (ctx.measureText(truncated + "…").width > maxWidth && truncated.length > 1) {
+      truncated = truncated.slice(0, -1);
+    }
+    return { size, text: truncated.replace(/[,;:.\s]+$/, "") + "…" };
+  }
+  return { size, text };
+}
+
+function truncateText(ctx: CanvasRenderingContext2D, text: string, maxWidth: number): string {
+  if (ctx.measureText(text).width <= maxWidth) return text;
+  let truncated = text;
+  while (ctx.measureText(truncated + "…").width > maxWidth && truncated.length > 1) {
+    truncated = truncated.slice(0, -1);
+  }
+  return truncated.replace(/[,;:.\s]+$/, "") + "…";
+}
+
 /** Measure wrapped text height for layout planning. */
 function measureWrappedHeight(lineCount: number, fontSize: number, lineHeight = 1.1): number {
   return Math.round(lineCount * fontSize * lineHeight);
@@ -871,15 +925,21 @@ function composeBanner({
 
     visible.forEach((d, i) => {
       const cx = padX + colW * (i + 0.5);
+      const availableDishWidth = colW - 20;
 
-      // Dish name
+      // Dish name - dynamically fit to available width
       ctx.fillStyle = theme.cream;
-      const dishSize = Math.round(H * 0.02);
+      let dishSize = Math.round(H * 0.02);
       ctx.font = `500 ${dishSize}px ${SERIF}`;
-      ctx.textAlign = "center";
-      const dishLines = wrapText(ctx, d.item.name, colW - 30, 2);
+      const dishLines = wrapText(ctx, d.item.name, availableDishWidth, 2);
+
+      while (ctx.measureText(dishLines[0] || d.item.name).width > availableDishWidth && dishSize > 10) {
+        dishSize -= 1;
+        ctx.font = `500 ${dishSize}px ${SERIF}`;
+      }
+
       dishLines.forEach((line, li) => {
-        ctx.fillText(line, cx, chipsTop + (li + 1) * dishSize * 1.2);
+        ctx.fillText(truncateText(ctx, line, availableDishWidth), cx, chipsTop + (li + 1) * dishSize * 1.2);
       });
 
       if (d.item.price) {
@@ -887,10 +947,17 @@ function composeBanner({
         ctx.shadowColor = "rgba(0,0,0,0.55)";
         ctx.shadowBlur = 6;
         ctx.fillStyle = theme.accent;
-        const pSize = Math.round(H * 0.018);
+        let pSize = Math.round(H * 0.018);
         ctx.font = `700 ${pSize}px ${SANS}`;
+        const priceText = formatPriceWithCurrency(d.item.price, currency);
+
+        while (ctx.measureText(priceText).width > availableDishWidth && pSize > 10) {
+          pSize -= 1;
+          ctx.font = `700 ${pSize}px ${SANS}`;
+        }
+
         const priceY = chipsTop + (dishLines.length + 1) * dishSize * 1.2 + Math.round(H * 0.014);
-        ctx.fillText(formatPriceWithCurrency(d.item.price, currency), cx, priceY);
+        ctx.fillText(priceText, cx, priceY);
         ctx.restore();
       }
 
