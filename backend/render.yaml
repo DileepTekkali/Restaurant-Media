@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: bite-sized-banners-backend
+    env: docker
+    plan: starter
+    branch: main
+    buildCommand: cd backend && supabase functions deploy
+    envVars:
+      - key: SUPABASE_SERVICE_ROLE_KEY
+        sync: false
+      - key: GROQ_API_KEY
+        sync: false

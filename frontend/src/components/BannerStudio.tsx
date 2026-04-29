@@ -590,16 +590,21 @@ function composeBanner({
   if (hero) {
     drawImageCover(ctx, hero.img, 0, photoTop, W, photoH);
     // soft top + bottom fade INTO the photo so it joins the bands without overlapping text
-    const topFade = ctx.createLinearGradient(0, photoTop, 0, photoTop + 80);
+    // Fixed: reduced gradient size to prevent covering the dish (especially in landscape)
+    const fadeTopH = Math.round(photoH * 0.12);
+    const fadeBotH = Math.round(photoH * 0.18);
+
+    const topFade = ctx.createLinearGradient(0, photoTop, 0, photoTop + fadeTopH);
     topFade.addColorStop(0, theme.ink);
     topFade.addColorStop(1, "rgba(0,0,0,0)");
     ctx.fillStyle = topFade;
-    ctx.fillRect(0, photoTop, W, 80);
-    const botFade = ctx.createLinearGradient(0, photoBottom - 120, 0, photoBottom);
+    ctx.fillRect(0, photoTop, W, fadeTopH);
+
+    const botFade = ctx.createLinearGradient(0, photoBottom - fadeBotH, 0, photoBottom);
     botFade.addColorStop(0, "rgba(0,0,0,0)");
     botFade.addColorStop(1, theme.ink);
     ctx.fillStyle = botFade;
-    ctx.fillRect(0, photoBottom - 120, W, 120);
+    ctx.fillRect(0, photoBottom - fadeBotH, W, fadeBotH);
   }
 
   /* ──── 3) Decorative motif (drawn over background, behind text) ──── */
