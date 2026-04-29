@@ -161,10 +161,8 @@ const Index = () => {
                 AI menu scraper + banner studio
               </div>
               <h1 className="text-4xl font-bold tracking-tight text-foreground sm:text-5xl md:text-6xl">
-                Turn any restaurant website into{" "}
-                <span className="bg-gradient-warm bg-clip-text text-transparent">
-                  shareable banners
-                </span>
+                Turn any restaurant website into
+                shareable banners
               </h1>
               <p className="max-w-2xl text-lg text-muted-foreground">
                 Paste your restaurant's URL. We'll extract every dish, then let you
