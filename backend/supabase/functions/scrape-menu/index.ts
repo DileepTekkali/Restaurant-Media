@@ -928,10 +928,22 @@ ${headingsBlock}
 - Do NOT invent new categories that are neither in the website headings nor in the generic fallback set.
 - Keep category names short (max 40 chars).
 
+STRICT FILTERING RULES (ignore anything that matches these):
+- IGNORE any entry that looks like a fraction + currency (e.g., "1/4 $", "1/2 £", "3/4 ₹") — these are NOT menu items.
+- IGNORE pure prices without item names (e.g., "$10", "₹250", "€15.50").
+- IGNORE quantities/weights (e.g., "500g", "1kg", "250ml", "16oz").
+- IGNORE navigation text: "Home", "About", "Contact", "Login", "Sign in", "Back", "Next", "View all".
+- IGNORE contact info: phone numbers, email addresses, physical addresses.
+- IGNORE hours/times: "Mon-Fri", "9am-10pm", "Open", "Closed".
+- IGNORE marketing fluff: "Best in town", "Order now", "Call us", "Visit us".
+- IGNORE anything that is ALL numbers or ALL special characters.
+- A valid dish name MUST contain at least 3 letters and look like real food (contains food-related words or is clearly a dish name).
+
 OTHER RULES:
 - BE EXHAUSTIVE: If the source lists 50+ dishes across multiple categories, return them ALL.
 - Deduplicate items across pages.
 - Preserve original currency symbols in price (₹, $, €, £, etc.). Use null if no price is visible.
+- Valid price format: Optional currency symbol, then numbers with optional decimal (e.g., "$12", "₹250", "€15.50", "£10.99"). Reject malformed prices.
 - Descriptions max 25 words. Use null if absent — do NOT invent descriptions.
 - Fix obvious typos in dish names but keep the original meaning.
 - Return ONLY genuine menu items. Skip nav, contact info, hours, addresses, marketing copy.
@@ -1035,9 +1047,36 @@ ${fullText.slice(0, 16000)}`;
 
   // Final sanity filter + dedupe by lowercased name.
   const byName = new Map<string, ParsedItem>();
+
+  // Regex patterns for invalid items
+  const fractionPriceRegex = /^\d+\/\d+\s*[$€£₹₽¥]/.test.bind(/^\d+\/\d+\s*[$€£₹₽¥]/);
+  const purePriceRegex = /^[$€£₹₽¥]?\s*\d+(\.\d+)?$/.test.bind(/^[$€£₹₽¥]?\s*\d+(\.\d+)?$/);
+  const quantityRegex = /^\d+\s*(g|kg|ml|l|oz|lb|kg)$/i.test.bind(/^\d+\s*(g|kg|ml|l|oz|lb|kg)$/i);
+  const navWords = /^(home|about|contact|login|sign in|menu|order now|call us|visit us|back|next|view all)$/i;
+
   for (const i of items) {
     if (!i.name || i.name.length < 2 || i.name.length > 120) continue;
-    const key = i.name.trim().toLowerCase();
+
+    const nameLower = i.name.trim().toLowerCase();
+
+    // Skip invalid patterns
+    if (fractionPriceRegex(i.name)) continue;  // "1/4 $" patterns
+    if (purePriceRegex(nameLower)) continue;       // Pure prices like "$10"
+    if (quantityRegex(nameLower)) continue;        // "500g", "1kg"
+    if (navWords.test(nameLower)) continue;         // Navigation text
+    if (/^\d+$/.test(nameLower)) continue;         // Pure numbers
+    if (/^[^\w\s]+$/.test(i.name)) continue;       // Only special characters
+
+    // Filter invalid prices
+    if (i.price) {
+      const priceStr = i.price.trim();
+      // Reject malformed prices (fraction prices, pure numbers without currency)
+      if (fractionPriceRegex(priceStr) || /^\d+\/\d+$/.test(priceStr)) {
+        i.price = null; // Strip invalid price
+      }
+    }
+
+    const key = nameLower;
     if (byName.has(key)) continue;
     byName.set(key, {
       name: i.name.trim(),
