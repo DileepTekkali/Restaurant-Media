@@ -1,15 +1,15 @@
 import { useMemo, useState } from "react";
 import { ChefHat, Sparkles, AlertCircle, RotateCcw, Wand2 } from "lucide-react";
+import { supabase } from "@/integrations/supabase/client";
 import { useToast } from "@/hooks/use-toast";
 import { UrlInputForm } from "@/components/UrlInputForm";
 import { ScrapingProgress } from "@/components/ScrapingProgress";
 import { MenuList } from "@/components/MenuList";
 import { BannerStudio } from "@/components/BannerStudio";
 import { CampaignSelector } from "@/components/CampaignSelector";
-import { MenuItem } from "@/types/menu";
+import { MenuItem, ScrapeResponse } from "@/types/menu";
 import { CampaignChoice } from "@/types/campaign";
 import { Button } from "@/components/ui/button";
-import { scrapeMenu } from "@/lib/api";
 
 type Status = "idle" | "loading" | "success" | "error";
 type Stage = "menu" | "campaign" | "banner";
@@ -38,11 +38,15 @@ const Index = () => {
     setCampaign(null);
 
     try {
-      const data = await scrapeMenu({ restaurantUrl: url });
+      const { data, error } = await supabase.functions.invoke<ScrapeResponse>(
+        "scrape-menu",
+        { body: { restaurantUrl: url } },
+      );
 
+      if (error) throw new Error(error.message);
       if (!data) throw new Error("No response from server");
 
-      if (data.status === "failed" || !data.menuItems || data.menuItems.length === 0) {
+      if (data.status === "failed" || data.menuItems.length === 0) {
         setStatus("error");
         setErrorMsg(
           data.error ||
