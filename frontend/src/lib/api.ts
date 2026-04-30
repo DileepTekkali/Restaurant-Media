@@ -26,6 +26,37 @@ interface GenerateImageRequest {
   enhance?: boolean;
 }
 
+interface ScrapeMenuRequest {
+  restaurantUrl: string;
+}
+
+interface ScrapeMenuResponse {
+  restaurantId?: string;
+  restaurantName?: string;
+  status: string;
+  menuItems: Array<{
+    id: string;
+    name: string;
+    category: string;
+    price: string | null;
+    description: string | null;
+    image_url?: string | null;
+  }>;
+  menuItemsCount?: number;
+  pagesFetched?: number;
+  logoUrl?: string | null;
+  error?: string;
+}
+
+export async function scrapeMenu(body: ScrapeMenuRequest): Promise<ScrapeMenuResponse> {
+  const res = await fetch(`${BACKEND_URL}/api/scrape-menu`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  return res.json();
+}
+
 export async function generateDishCopy(body: DishCopyRequest): Promise<DishCopyResponse> {
   const res = await fetch(`${BACKEND_URL}/api/dish-copy`, {
     method: 'POST',
