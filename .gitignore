@@ -40,3 +40,6 @@ frontend/bun.lock
 frontend/bun.lockb
 backend/bun.lock
 backend/bun.lockb
+
+# Supabase temp files
+backend/supabase/.temp/

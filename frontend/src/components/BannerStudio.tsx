@@ -1133,29 +1133,19 @@ export const BannerStudio = ({
             const prompt = parts.join(" ").slice(0, 420);
             const baseSeed = Math.abs([...item.id].reduce((h, c) => (h * 31 + c.charCodeAt(0)) | 0, 0));
             const seed = (baseSeed + generationKey) % 9_999_999;
-            for (let attempt = 1; attempt <= 2; attempt++) {
-              try {
-                const response = await fetch(
-                  `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/generate-image`,
-                  {
-                    method: 'POST',
-                    headers: {
-                      'Content-Type': 'application/json',
-                      'Authorization': `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-                    },
-                    body: JSON.stringify({ prompt, width: 1280, height: 1280, seed, model: "flux", nologo: true, enhance: true }),
-                  }
-                );
-                if (!response.ok) throw new Error(`HTTP error: ${response.status}`);
-                const blob = await response.blob();
-                const objectUrl = URL.createObjectURL(blob);
-                return await new Promise<{ item: MenuItem; img: HTMLImageElement }>((resolve, reject) => {
-                  const img = new Image();
-                  img.crossOrigin = "anonymous";
-                  img.onload = () => resolve({ item, img });
-                  img.onerror = () => reject(new Error(`Failed to load image`));
-                  img.src = objectUrl;
-                });
+              for (let attempt = 1; attempt <= 2; attempt++) {
+                try {
+                  const blob = await import("@/lib/api").then(m => m.generateImage(
+                    { prompt, width: 1280, height: 1280, seed, model: "flux", nologo: true, enhance: true }
+                  ));
+                  const objectUrl = URL.createObjectURL(blob);
+                  return await new Promise<{ item: MenuItem; img: HTMLImageElement }>((resolve, reject) => {
+                    const img = new Image();
+                    img.crossOrigin = "anonymous";
+                    img.onload = () => resolve({ item, img });
+                    img.onerror = () => reject(new Error(`Failed to load image`));
+                    img.src = objectUrl;
+                  });
               } catch (e) {
                 if (attempt === 2) return createFallbackImage(item, theme);
               }
@@ -1170,11 +1160,10 @@ export const BannerStudio = ({
         await Promise.all(
           cappedItems.map(async (item) => {
             try {
-              const { data } = await supabase.functions.invoke<{ tagline?: string }>(
-                "dish-copy",
-                { body: { dishName: item.name, dishDescription: item.description, campaignType: campaign.type, festival: campaign.festival ?? null, restaurantName: safeName } },
-              );
-              copyMap[item.id] = data?.tagline ?? null;
+              const result = await import("@/lib/api").then(m => m.generateDishCopy(
+                { dishName: item.name, dishDescription: item.description, campaignType: campaign.type, festival: campaign.festival ?? null, restaurantName: safeName }
+              ));
+              copyMap[item.id] = result.tagline ?? null;
             } catch { copyMap[item.id] = null; }
           }),
         );
